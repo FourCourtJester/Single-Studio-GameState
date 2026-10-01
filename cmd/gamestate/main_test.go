@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func freePort(t *testing.T) string {
@@ -46,6 +48,33 @@ func TestGamePortFlag(t *testing.T) {
 	}
 	if _, _, err := parseConfig([]string{"-game", "lol", "-game-port", "3000"}); err == nil {
 		t.Error("League's port is fixed; -game-port should fail")
+	}
+}
+
+func TestOverlaysConnectAtBothPaths(t *testing.T) {
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error)
+	go func() { errc <- run(ctx, []string{"-no-window", "-port", port}) }()
+	defer func() { cancel(); <-errc }()
+
+	for _, path := range []string{"/ws", "/", ""} {
+		url := "ws://127.0.0.1:" + port + path
+		var conn *websocket.Conn
+		var err error
+		for range 50 { // the server may still be starting
+			dctx, dcancel := context.WithTimeout(context.Background(), time.Second)
+			conn, _, err = websocket.Dial(dctx, url, nil)
+			dcancel()
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		conn.CloseNow()
 	}
 }
 

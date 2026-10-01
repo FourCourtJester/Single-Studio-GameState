@@ -68,7 +68,7 @@ the choice is remembered. GameState runs for as long as the window is
 open: minimise it while you stream, close it to quit. Opening GameState
 again while it's running brings the existing window forward.
 
-Single Studio connects to `ws://127.0.0.1:47600/ws`. `GET /status` reports the
+Single Studio connects to `ws://127.0.0.1:47600/ws` (`ws://127.0.0.1:47600` works too). `GET /status` reports the
 game, whether it is on, the connected overlay count and when the last payload
 arrived.
 

@@ -165,6 +165,9 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	var show atomic.Pointer[func()]
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws", hub)
+	// Also accept overlays at the bare address, for clients that only let
+	// you set a host and port.
+	mux.Handle("GET /{$}", hub)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(struct {
