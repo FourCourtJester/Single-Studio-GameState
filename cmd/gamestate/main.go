@@ -164,9 +164,7 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 
 	var show atomic.Pointer[func()]
 	mux := http.NewServeMux()
-	mux.Handle("GET /ws", hub)
-	// Also accept overlays at the bare address, for clients that only let
-	// you set a host and port.
+	// Overlays connect at the bare address: ws://127.0.0.1:<port>.
 	mux.Handle("GET /{$}", hub)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

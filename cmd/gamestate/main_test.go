@@ -51,14 +51,14 @@ func TestGamePortFlag(t *testing.T) {
 	}
 }
 
-func TestOverlaysConnectAtBothPaths(t *testing.T) {
+func TestOverlaysConnectAtBareAddress(t *testing.T) {
 	port := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error)
 	go func() { errc <- run(ctx, []string{"-no-window", "-port", port}) }()
 	defer func() { cancel(); <-errc }()
 
-	for _, path := range []string{"/ws", "/", ""} {
+	for _, path := range []string{"", "/"} {
 		url := "ws://127.0.0.1:" + port + path
 		var conn *websocket.Conn
 		var err error

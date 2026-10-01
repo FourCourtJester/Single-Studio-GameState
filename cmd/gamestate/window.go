@@ -39,13 +39,15 @@ type window struct {
 // ctx is cancelled. Closing the window quits GameState.
 func runWindow(ctx context.Context, w window) {
 	a := app.NewWithID(appID)
-	a.SetIcon(fyne.NewStaticResource("Icon.png", iconPNG))
+	icon := fyne.NewStaticResource("Icon.png", iconPNG)
+	a.SetIcon(icon)
 	win := a.NewWindow(ui.Title)
 	win.SetMaster()
 
 	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, ui.Options{
 		Bind: w.bind,
 		Port: w.relay.Port(),
+		Logo: icon,
 		Dark: w.dark,
 	})
 	p.OnTheme = w.onTheme

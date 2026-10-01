@@ -215,7 +215,7 @@ func TestPortApply(t *testing.T) {
 	}
 	test.Tap(f.panel.bcast.apply)
 	eventually(t, f, func() bool { return f.panel.port == 48000 })
-	if !strings.Contains(f.panel.meta.Text, "ws://127.0.0.1:48000/ws") {
+	if !strings.Contains(f.panel.meta.Text, "ws://127.0.0.1:48000 ") {
 		t.Fatalf("meta = %q", f.panel.meta.Text)
 	}
 	if !f.panel.bcast.apply.Disabled() {
@@ -296,21 +296,94 @@ func TestGamePickerList(t *testing.T) {
 		t.Fatalf("selected %q before picking", f.panel.game.Selected)
 	}
 	test.Tap(f.panel.game)
-	if f.panel.game.popup == nil || !f.panel.game.popup.Visible() {
+	if !f.panel.game.isOpen() {
 		t.Fatal("list did not open")
 	}
-	rows := f.panel.game.popup.Content.(*fyne.Container).Objects
 	var names []string
-	for _, r := range rows {
-		names = append(names, r.(*pickerRow).title.Name)
+	for _, r := range f.panel.game.list.rows {
+		names = append(names, r.title.Name)
 	}
 	if len(names) != 6 || names[0] != "Apex Legends" {
 		t.Fatalf("rows: %v (War3 should be left out)", names)
 	}
-	test.Tap(rows[4].(*pickerRow)) // Rocket League
+	test.Tap(f.panel.game.list.rows[4]) // Rocket League
 	eventually(t, f, func() bool { return f.ctrl.State().Game == adapter.RL })
-	if f.panel.game.popup != nil {
+	if f.panel.game.isOpen() {
 		t.Fatal("list should close after picking")
+	}
+}
+
+func TestOpenListFitsInWindow(t *testing.T) {
+	f := newFixture(t)
+	before := f.win.Canvas().Size().Height
+	test.Tap(f.panel.game)
+	popup := f.panel.game.popup
+	bottom := popup.Content.Position().Y + popup.Content.Size().Height
+	if canvasH := f.win.Canvas().Size().Height; bottom > canvasH {
+		t.Fatalf("list ends at %v but the window is %v tall", bottom, canvasH)
+	}
+	if f.win.Canvas().Size().Height <= before {
+		t.Fatal("window should grow to fit the open list")
+	}
+
+	f.panel.game.list.cancel()
+	time.Sleep(resizeSettle + 50*time.Millisecond)
+	eventually(t, f, func() bool { return abs(f.win.Canvas().Size().Height-before) < 1 })
+}
+
+func TestGamePickerKeyboard(t *testing.T) {
+	f := newFixture(t)
+	g := f.panel.game
+	key := func(target fyne.Focusable, name fyne.KeyName) { target.TypedKey(&fyne.KeyEvent{Name: name}) }
+	game := func() string {
+		var id string
+		eventually(t, f, func() bool { id = f.ctrl.State().Game; return id == g.Selected })
+		return id
+	}
+
+	f.win.Canvas().Focus(g)
+	key(g, fyne.KeyDown) // nothing selected yet: Down picks the first game
+	if got := game(); got != adapter.Apex {
+		t.Fatalf("after Down: %q", got)
+	}
+	key(g, fyne.KeyDown)
+	if got := game(); got != adapter.CS2 {
+		t.Fatalf("after Down again: %q", got)
+	}
+	key(g, fyne.KeyUp)
+	key(g, fyne.KeyUp) // stops at the top
+	if got := game(); got != adapter.Apex {
+		t.Fatalf("after Up twice: %q", got)
+	}
+	g.TypedRune('s')
+	if got := game(); got != adapter.SC2 {
+		t.Fatalf("after typing s: %q", got)
+	}
+	key(g, fyne.KeyHome)
+	if got := game(); got != adapter.Apex {
+		t.Fatalf("after Home: %q", got)
+	}
+
+	// Enter opens the list and focuses it; Escape closes without changing.
+	key(g, fyne.KeyReturn)
+	if !g.isOpen() || f.win.Canvas().Focused() != g.list {
+		t.Fatal("Enter should open the list and focus it")
+	}
+	l := g.list
+	key(l, fyne.KeyDown)
+	key(l, fyne.KeyEscape)
+	if g.isOpen() || g.Selected != adapter.Apex || f.win.Canvas().Focused() != g {
+		t.Fatalf("Escape: open=%v selected=%q", g.isOpen(), g.Selected)
+	}
+
+	// Space opens; Down, Down, Enter picks the third game.
+	g.TypedRune(' ')
+	l = g.list
+	key(l, fyne.KeyDown)
+	key(l, fyne.KeyDown)
+	key(l, fyne.KeyReturn)
+	if got := game(); got != adapter.Dota2 || g.isOpen() {
+		t.Fatalf("after picking from the list: %q open=%v", got, g.isOpen())
 	}
 }
 
@@ -321,6 +394,31 @@ func TestBadgeTextReadable(t *testing.T) {
 		if (lum > 150) != (fg != color.White) {
 			t.Errorf("%s: text colour doesn't suit its badge", game)
 		}
+	}
+}
+
+func TestWindowAboveMinimumIsNotFought(t *testing.T) {
+	// Recreate a real window that stops short of the height asked for (an
+	// OS minimum), then the user dragging it taller. Neither should make
+	// the panel keep resizing.
+	f := newFixture(t)
+	want := f.win.Content().MinSize().Height
+	f.panel.requested = want
+	f.win.Resize(fyne.NewSize(Width, want+9)) // the OS's minimum, above what was asked
+	f.panel.resizedAt = time.Now().Add(-time.Second)
+	f.panel.Refresh() // records the settled height
+	f.panel.Refresh()
+	if h := f.win.Canvas().Size().Height; h != want+9 {
+		t.Fatalf("panel kept fighting the window's minimum: height %v", h)
+	}
+
+	f.win.Resize(fyne.NewSize(Width, 650)) // the user enlarges it
+	for range 3 {
+		time.Sleep(resizeSettle)
+		f.panel.Refresh()
+	}
+	if h := f.win.Canvas().Size().Height; h != 650 {
+		t.Fatalf("window snapped back to %v after the user enlarged it", h)
 	}
 }
 
@@ -384,7 +482,7 @@ func TestScreenshots(t *testing.T) {
 	shot("6-rl")
 	f.panel.Refresh()
 	test.Tap(f.panel.game)
-	img := f.win.Canvas().Capture() // shot() would refresh and close nothing; capture the open list as is
+	img := f.win.Canvas().Capture() // capture the open list as is
 	out, _ := os.Create(filepath.Join(dir, "7-picker-open.png"))
 	png.Encode(out, img)
 	out.Close()

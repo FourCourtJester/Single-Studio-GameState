@@ -46,7 +46,9 @@ Opening GameState shows its window:
 ![GameState window](docs/panel.png)
 
 - **Game:** pick the title you're streaming; each has a coloured badge. The
-  choice is remembered.
+  choice is remembered. From the keyboard: Tab to the picker, Up/Down to
+  change the game, a letter to jump, Enter or Space to open the list
+  (Up/Down, Home/End, Enter to pick, Escape to close).
 - **Game port:** for games whose port can change, the port GameState uses
   to reach that game, prefilled with its default. If you've changed the
   port in the game's own setup, enter the same one and press Apply. Each
@@ -68,7 +70,7 @@ the choice is remembered. GameState runs for as long as the window is
 open: minimise it while you stream, close it to quit. Opening GameState
 again while it's running brings the existing window forward.
 
-Single Studio connects to `ws://127.0.0.1:47600/ws` (`ws://127.0.0.1:47600` works too). `GET /status` reports the
+Single Studio connects to `ws://127.0.0.1:47600`. `GET /status` reports the
 game, whether it is on, the connected overlay count and when the last payload
 arrived.
 

@@ -59,7 +59,7 @@ func (r *relayServer) Listen(port int) error {
 			}
 		}
 	}()
-	r.log.Info("relay listening", "ws", "ws://"+addr+"/ws")
+	r.log.Info("relay listening", "ws", "ws://"+addr)
 	return nil
 }
 

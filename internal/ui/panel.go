@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -33,6 +35,9 @@ const (
 	// resizeSettle is how long the OS gets to apply a resize before the
 	// window's height is trusted.
 	resizeSettle = 300 * time.Millisecond
+	// settleSlack is how far the settled height may be from the one asked
+	// for and still count as ours (the OS's minimum height, rounding).
+	settleSlack = 24
 )
 
 // Setup guides for games whose feed the user has to switch on themselves.
@@ -43,6 +48,22 @@ var (
 	rlGuide, _   = url.Parse("https://www.rocketleague.com/en/developer/stats-api")
 	apexGuide, _ = url.Parse("https://apexliveapi.com/")
 )
+
+// Repositories linked from the footer.
+var (
+	singleStudioRepo, _ = url.Parse("https://github.com/FourCourtJester/Single-Studio")
+	gameStateRepo, _    = url.Parse("https://github.com/FourCourtJester/Single-Studio-GameState")
+)
+
+func sectionHeading(text string) *widget.Label {
+	return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+}
+
+// footerStyle matches the links' size (Fyne can't shrink link text).
+var footerStyle = widget.RichTextStyle{
+	Inline:    true,
+	ColorName: theme.ColorNameDisabled,
+}
 
 // help is the setup hint shown under the game picker for one game. url is
 // optional.
@@ -95,6 +116,9 @@ type Panel struct {
 	// do runs a function on the UI thread; tests swap it for a queue.
 	do func(func())
 
+	wanted    atomic.Pointer[string] // game the user last picked
+	selecting sync.Mutex             // one game switch at a time
+
 	dark bool
 
 	game       *GamePicker
@@ -114,11 +138,14 @@ type Panel struct {
 	errList    *fyne.Container
 	shownErrs  string
 
-	// The window's real height can differ from what was asked for, and only
-	// settles after the OS applies a resize. settled is the height observed
-	// once our last resize took effect; any other height means the user
-	// resized the window, and it is left alone.
+	// The window's real height can differ a little from what was asked for
+	// (the OS may not go below a minimum), and only settles after the OS
+	// applies a resize. requested is the height last asked for; settled is
+	// the height observed once that took effect, or -1 if something else
+	// changed the size meanwhile. Any height other than settled means the
+	// user resized the window, and it is left alone.
 	resizedAt time.Time
+	requested float32
 	settled   float32
 }
 
@@ -127,6 +154,7 @@ type Options struct {
 	Bind string // address the broadcast port is on
 	Port int    // broadcast port Single Studio connects to; 0 if it couldn't open
 	Dark bool
+	Logo fyne.Resource // shown beside the title; optional
 }
 
 // NewPanel builds the window content and sets it on win.
@@ -137,12 +165,19 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	a.Settings().SetTheme(newTheme(o.Dark))
 
 	title := widget.NewLabelWithStyle(Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	title.SizeName = theme.SizeNameSubHeadingText
+	header := fyne.CanvasObject(title)
+	if o.Logo != nil {
+		logo := canvas.NewImageFromResource(o.Logo)
+		logo.FillMode = canvas.ImageFillContain
+		logo.SetMinSize(fyne.NewSize(32, 32))
+		header = container.NewBorder(nil, nil, logo, nil, title)
+	}
 	p.themeBtn = widget.NewButtonWithIcon("", nil, p.toggleTheme)
 	p.themeBtn.Importance = widget.LowImportance
 
-	gameCaption := widget.NewLabel("Game")
-	gameCaption.SizeName = theme.SizeNameCaptionText
 	p.game = NewGamePicker(p.onSelect)
+	p.game.OnOpen = p.fit
 
 	// Some games only send data once the user has set them up (a GSI file,
 	// an ini setting). That setup is theirs to do; say what GameState expects and
@@ -205,15 +240,28 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 		container.NewBorder(container.NewBorder(nil, nil, errTitle, clear), nil, nil, nil, p.errList)))
 	p.errPane.Hide()
 
+	footer := widget.NewRichText(
+		&widget.HyperlinkSegment{Text: "Single Studio", URL: singleStudioRepo, Alignment: fyne.TextAlignCenter},
+		&widget.TextSegment{Text: " · ", Style: footerStyle},
+		&widget.HyperlinkSegment{Text: "GameState", URL: gameStateRepo},
+		&widget.TextSegment{Text: " on GitHub", Style: footerStyle},
+	)
+
 	win.SetContent(container.NewPadded(container.NewVBox(
-		container.NewBorder(nil, nil, nil, p.themeBtn, title),
-		container.NewVBox(gameCaption, p.game),
+		container.NewBorder(nil, nil, nil, p.themeBtn, header),
+		widget.NewSeparator(),
+		sectionHeading("Choose a Game"),
+		p.game,
 		p.helpBox,
 		p.gamePort.row,
+		widget.NewSeparator(),
+		sectionHeading("Broadcasting"),
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
 		p.bcast.row,
 		p.meta,
 		p.errPane,
+		widget.NewSeparator(),
+		footer,
 	)))
 	p.applyTheme()
 	p.Refresh()
@@ -225,7 +273,8 @@ func (p *Panel) Show() {
 	// Wrapped text only knows its height once it has a width, so size
 	// twice: once to lay out at Width, once to fit what that produced.
 	for range 2 {
-		p.win.Resize(fyne.NewSize(Width, p.win.Content().MinSize().Height))
+		p.requested = p.win.Content().MinSize().Height
+		p.win.Resize(fyne.NewSize(Width, p.requested))
 	}
 	p.resizedAt = time.Now()
 	p.win.Show()
@@ -258,13 +307,14 @@ func (p *Panel) SetPort(port int) {
 func (p *Panel) Refresh() {
 	st := p.ctrl.State()
 
-	if t, ok := adapter.Lookup(st.Game); ok && t.Available {
+	game := p.shownGameFor(st)
+	if t, ok := adapter.Lookup(game); ok && t.Available {
 		p.game.SetSelected(t.ID)
 	} else {
 		p.game.SetSelected("")
 	}
-	gamePort := p.ctrl.Port(st.Game)
-	if h, ok := helpFor(st.Game, p.bind, gamePort); ok {
+	gamePort := p.ctrl.Port(game)
+	if h, ok := helpFor(game, p.bind, gamePort); ok {
 		p.helpText.SetText(h.text)
 		p.helpLink.SetText(h.link)
 		p.helpLink.SetURL(h.url)
@@ -279,14 +329,14 @@ func (p *Panel) Refresh() {
 	}
 	if gamePort != 0 {
 		// Refill the box only when the game changes, so typing isn't lost.
-		if st.Game != p.shownGame {
+		if game != p.shownGame {
 			p.gamePort.Set(gamePort)
 		}
 		p.gamePort.row.Show()
 	} else {
 		p.gamePort.row.Hide()
 	}
-	p.shownGame = st.Game
+	p.shownGame = game
 	broadcasting := p.port != 0
 	if broadcasting {
 		p.game.Enable()
@@ -320,8 +370,8 @@ func (p *Panel) Refresh() {
 		overlays = "1 overlay"
 	}
 	if broadcasting {
-		url := "ws://" + net.JoinHostPort(p.bind, strconv.Itoa(p.port)) + "/ws"
-		p.meta.SetText(fmt.Sprintf("Single Studio connects to %s · %s connected", url, overlays))
+		url := "ws://" + net.JoinHostPort(p.bind, strconv.Itoa(p.port))
+		p.meta.SetText(fmt.Sprintf("Built for Single Studio: overlays connect to %s · %s connected", url, overlays))
 	} else {
 		p.meta.SetText("Not broadcasting. Choose a free port and press Apply.")
 	}
@@ -369,30 +419,54 @@ func (p *Panel) refreshErrors() {
 // width, so a resize is followed by a second measurement.
 func (p *Panel) fit() {
 	if !p.resizedAt.IsZero() && time.Since(p.resizedAt) > resizeSettle {
+		// Only a height close to the one asked for is ours; anything else
+		// was the user resizing while ours was settling.
 		p.settled = p.win.Canvas().Size().Height
+		if abs(p.settled-p.requested) > settleSlack {
+			p.settled = -1
+		}
 		p.resizedAt = time.Time{}
 	}
 	for range 2 {
-		want := p.win.Content().MinSize().Height
+		// The open game list floats over the window and can't extend past
+		// its edge, so leave room for it too.
+		want := max(p.win.Content().MinSize().Height, p.game.NeededHeight())
 		cur := p.win.Canvas().Size()
 		grow := want > cur.Height+0.5
 		ours := p.resizedAt.IsZero() && abs(cur.Height-p.settled) < 1
-		shrink := want < cur.Height-1 && ours
+		// Don't repeat a shrink the window has already refused (it stopped
+		// short of want at its minimum height).
+		retry := abs(want-p.requested) < 1
+		shrink := want < cur.Height-1 && ours && !retry
 		if !grow && !shrink {
 			return
 		}
+		p.requested = want
 		p.win.Resize(fyne.NewSize(cur.Width, want))
 		p.resizedAt = time.Now()
 	}
 }
 
 func (p *Panel) onSelect(game string) {
+	p.wanted.Store(&game)
 	// Switching games restarts the adapter, which can take a moment to
-	// release its ports; keep that off the UI thread.
+	// release its ports; keep that off the UI thread. Each switch applies
+	// the latest choice, so quick changes (Down, Down) land in order.
 	go func() {
-		p.ctrl.Select(game)
+		p.selecting.Lock()
+		defer p.selecting.Unlock()
+		p.ctrl.Select(*p.wanted.Load())
 		p.do(p.Refresh)
 	}()
+}
+
+// shownGameFor returns the game the panel shows: the one the user last picked, even
+// while the switch to it is still in progress.
+func (p *Panel) shownGameFor(st control.State) string {
+	if w := p.wanted.Load(); w != nil && *w != st.Game {
+		return *w
+	}
+	return st.Game
 }
 
 func (p *Panel) onPower(on bool) {

@@ -20,7 +20,7 @@ func newTestRelay(t *testing.T) *relayServer {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	hub := relay.NewHub([]string{"*"}, log)
 	mux := http.NewServeMux()
-	mux.Handle("GET /ws", hub)
+	mux.Handle("GET /{$}", hub)
 	r := newRelayServer("127.0.0.1", mux, hub, log)
 	t.Cleanup(r.Close)
 	return r
@@ -36,7 +36,7 @@ func dialRelay(t *testing.T, port int) (*websocket.Conn, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws://127.0.0.1:"+strconv.Itoa(port)+"/ws", nil)
+	conn, _, err := websocket.Dial(ctx, "ws://127.0.0.1:"+strconv.Itoa(port), nil)
 	return conn, err
 }
 

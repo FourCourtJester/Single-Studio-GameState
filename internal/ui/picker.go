@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image/color"
+	"unicode"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -61,15 +63,24 @@ func readableOn(c color.NRGBA) color.Color {
 	return color.White
 }
 
-// GamePicker is a drop-down of games, each shown with its badge.
+// GamePicker is a drop-down of games, each shown with its badge. From the
+// keyboard it works like a native drop-down: when focused, Up and Down
+// change the game, a letter jumps to the next game starting with it, and
+// Enter or Space opens the list.
 type GamePicker struct {
 	widget.DisableableWidget
 	Selected    string // game namespace, "" for none
 	Placeholder string
 	OnChanged   func(game string)
+	// OnOpen is called as the list opens, so the window can make room for
+	// it; NeededHeight says how tall the window must be.
+	OnOpen func()
 
-	games []adapter.Title
-	popup *widget.PopUp
+	games   []adapter.Title
+	focused bool
+	popup   *widget.PopUp
+	list    *pickerList
+	need    float32
 }
 
 // NewGamePicker lists the available titles.
@@ -93,30 +104,77 @@ func (p *GamePicker) SetSelected(game string) {
 	p.Refresh()
 }
 
-// Tapped opens the list under the picker.
+// NeededHeight is how tall the window must be to show the open list in
+// full, or 0 when the list is closed.
+func (p *GamePicker) NeededHeight() float32 {
+	if p.isOpen() {
+		return p.need
+	}
+	return 0
+}
+
+// Tapped focuses the picker and opens the list.
 func (p *GamePicker) Tapped(*fyne.PointEvent) {
 	if p.Disabled() {
 		return
 	}
-	c := fyne.CurrentApp().Driver().CanvasForObject(p)
-	if c == nil {
+	if c := p.canvas(); c != nil {
+		c.Focus(p)
+	}
+	p.open()
+}
+
+func (p *GamePicker) canvas() fyne.Canvas {
+	return fyne.CurrentApp().Driver().CanvasForObject(p)
+}
+
+func (p *GamePicker) isOpen() bool { return p.popup != nil && p.popup.Visible() }
+
+func (p *GamePicker) index(game string) int {
+	for i, t := range p.games {
+		if t.ID == game {
+			return i
+		}
+	}
+	return -1
+}
+
+func (p *GamePicker) open() {
+	c := p.canvas()
+	if c == nil || p.isOpen() {
 		return
 	}
-	rows := container.NewVBox()
-	for _, t := range p.games {
-		rows.Add(newPickerRow(t, t.ID == p.Selected, p.choose))
-	}
-	p.popup = widget.NewPopUp(rows, c)
+	p.list = newPickerList(p.games, p.index(p.Selected), p.choose, p.close)
+	p.popup = widget.NewPopUp(p.list, c)
 	pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(p)
-	p.popup.ShowAtPosition(pos.Add(fyne.NewPos(0, p.Size().Height)))
-	p.popup.Resize(fyne.NewSize(p.Size().Width, rows.MinSize().Height))
+	below := pos.Y + p.Size().Height
+	p.need = below + p.popup.MinSize().Height + theme.Padding()
+	// Make room first: a pop-up can't extend past the window's edge.
+	if p.OnOpen != nil {
+		p.OnOpen()
+	}
+	p.popup.ShowAtPosition(fyne.NewPos(pos.X, below))
+	p.popup.Resize(fyne.NewSize(p.Size().Width, p.list.MinSize().Height))
+	c.Focus(p.list)
+}
+
+// close shuts the list and puts focus back on the picker.
+func (p *GamePicker) close() {
+	if p.popup != nil {
+		p.popup.Hide()
+		p.popup, p.list = nil, nil
+	}
+	if c := p.canvas(); c != nil {
+		c.Focus(p)
+	}
 }
 
 func (p *GamePicker) choose(game string) {
-	if p.popup != nil {
-		p.popup.Hide()
-		p.popup = nil
-	}
+	p.close()
+	p.change(game)
+}
+
+func (p *GamePicker) change(game string) {
 	if game == p.Selected {
 		return
 	}
@@ -125,6 +183,77 @@ func (p *GamePicker) choose(game string) {
 	if p.OnChanged != nil {
 		p.OnChanged(game)
 	}
+}
+
+// step moves the selection by delta, stopping at either end.
+func (p *GamePicker) step(delta int) {
+	i := p.index(p.Selected) + delta
+	if p.Selected == "" && delta < 0 {
+		i = 0
+	}
+	if i < 0 || i >= len(p.games) {
+		return
+	}
+	p.change(p.games[i].ID)
+}
+
+// FocusGained shows the focus ring.
+func (p *GamePicker) FocusGained() {
+	p.focused = true
+	p.Refresh()
+}
+
+// FocusLost hides the focus ring.
+func (p *GamePicker) FocusLost() {
+	p.focused = false
+	p.Refresh()
+}
+
+// TypedRune opens the list on Space, or jumps to the next game whose name
+// starts with the letter typed.
+func (p *GamePicker) TypedRune(r rune) {
+	if p.Disabled() {
+		return
+	}
+	if r == ' ' {
+		p.open()
+		return
+	}
+	if i := nextStartingWith(p.games, p.index(p.Selected), r); i >= 0 {
+		p.change(p.games[i].ID)
+	}
+}
+
+// TypedKey handles the arrow keys, Home, End and Enter.
+func (p *GamePicker) TypedKey(e *fyne.KeyEvent) {
+	if p.Disabled() {
+		return
+	}
+	switch e.Name {
+	case fyne.KeyDown:
+		p.step(1)
+	case fyne.KeyUp:
+		p.step(-1)
+	case fyne.KeyHome:
+		p.change(p.games[0].ID)
+	case fyne.KeyEnd:
+		p.change(p.games[len(p.games)-1].ID)
+	case fyne.KeyReturn, fyne.KeyEnter:
+		p.open()
+	}
+}
+
+// nextStartingWith returns the index of the next game after from whose name
+// starts with r, wrapping round, or -1.
+func nextStartingWith(games []adapter.Title, from int, r rune) int {
+	want := unicode.ToLower(r)
+	for n := 1; n <= len(games); n++ {
+		i := (from + n + len(games)) % len(games)
+		if first, _ := utf8.DecodeRuneInString(games[i].Name); unicode.ToLower(first) == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // Cursor shows a pointer over the picker.
@@ -172,6 +301,11 @@ func (r *pickerRenderer) Layout(size fyne.Size) {
 
 func (r *pickerRenderer) Refresh() {
 	r.bg.FillColor = theme.Color(theme.ColorNameInputBackground)
+	r.bg.StrokeWidth = 0
+	if r.p.focused {
+		r.bg.StrokeColor = theme.Color(theme.ColorNamePrimary)
+		r.bg.StrokeWidth = 2
+	}
 	r.bg.Refresh()
 	if r.shown != r.p.Selected || r.badge == nil && r.p.Selected != "" {
 		r.badge = nil
@@ -205,26 +339,95 @@ func (r *pickerRenderer) Objects() []fyne.CanvasObject {
 
 func (r *pickerRenderer) Destroy() {}
 
+// pickerList is the open list. It takes keyboard focus while open: Up and
+// Down move the highlight, Home and End jump to either end, Enter or Space
+// picks the highlighted game, and Escape closes without changing anything.
+type pickerList struct {
+	widget.BaseWidget
+	games     []adapter.Title
+	highlight int
+	rows      []*pickerRow
+	box       *fyne.Container
+	choose    func(game string)
+	cancel    func()
+}
+
+func newPickerList(games []adapter.Title, selected int, choose func(string), cancel func()) *pickerList {
+	l := &pickerList{games: games, choose: choose, cancel: cancel, box: container.NewVBox()}
+	for i, t := range games {
+		row := newPickerRow(t, i == selected, l, i)
+		l.rows = append(l.rows, row)
+		l.box.Add(row)
+	}
+	l.ExtendBaseWidget(l)
+	l.setHighlight(max(selected, 0))
+	return l
+}
+
+func (l *pickerList) setHighlight(i int) {
+	i = min(max(i, 0), len(l.rows)-1)
+	l.highlight = i
+	for j, row := range l.rows {
+		if row.highlighted != (j == i) {
+			row.highlighted = j == i
+			row.Refresh()
+		}
+	}
+}
+
+func (l *pickerList) CreateRenderer() fyne.WidgetRenderer { return widget.NewSimpleRenderer(l.box) }
+
+func (l *pickerList) FocusGained() {}
+func (l *pickerList) FocusLost()   {}
+
+func (l *pickerList) TypedRune(r rune) {
+	if r == ' ' {
+		l.choose(l.games[l.highlight].ID)
+		return
+	}
+	if i := nextStartingWith(l.games, l.highlight, r); i >= 0 {
+		l.setHighlight(i)
+	}
+}
+
+func (l *pickerList) TypedKey(e *fyne.KeyEvent) {
+	switch e.Name {
+	case fyne.KeyDown:
+		l.setHighlight(l.highlight + 1)
+	case fyne.KeyUp:
+		l.setHighlight(l.highlight - 1)
+	case fyne.KeyHome:
+		l.setHighlight(0)
+	case fyne.KeyEnd:
+		l.setHighlight(len(l.rows) - 1)
+	case fyne.KeyReturn, fyne.KeyEnter:
+		l.choose(l.games[l.highlight].ID)
+	case fyne.KeyEscape:
+		l.cancel()
+	}
+}
+
 // pickerRow is one game in the open list.
 type pickerRow struct {
 	widget.BaseWidget
-	title    adapter.Title
-	selected bool
-	hovered  bool
-	choose   func(game string)
+	title       adapter.Title
+	selected    bool
+	highlighted bool
+	list        *pickerList
+	index       int
 }
 
-func newPickerRow(t adapter.Title, selected bool, choose func(string)) *pickerRow {
-	r := &pickerRow{title: t, selected: selected, choose: choose}
+func newPickerRow(t adapter.Title, selected bool, list *pickerList, index int) *pickerRow {
+	r := &pickerRow{title: t, selected: selected, list: list, index: index}
 	r.ExtendBaseWidget(r)
 	return r
 }
 
-func (r *pickerRow) Tapped(*fyne.PointEvent)        { r.choose(r.title.ID) }
+func (r *pickerRow) Tapped(*fyne.PointEvent)        { r.list.choose(r.title.ID) }
 func (r *pickerRow) Cursor() desktop.Cursor         { return desktop.PointerCursor }
-func (r *pickerRow) MouseIn(*desktop.MouseEvent)    { r.hovered = true; r.Refresh() }
+func (r *pickerRow) MouseIn(*desktop.MouseEvent)    { r.list.setHighlight(r.index) }
 func (r *pickerRow) MouseMoved(*desktop.MouseEvent) {}
-func (r *pickerRow) MouseOut()                      { r.hovered = false; r.Refresh() }
+func (r *pickerRow) MouseOut()                      {}
 
 func (r *pickerRow) CreateRenderer() fyne.WidgetRenderer {
 	bg := canvas.NewRectangle(nil)
@@ -254,7 +457,7 @@ func (rr *rowRenderer) Layout(size fyne.Size) {
 
 func (rr *rowRenderer) Refresh() {
 	rr.bg.FillColor = color.Transparent
-	if rr.r.hovered {
+	if rr.r.highlighted {
 		rr.bg.FillColor = theme.Color(theme.ColorNameHover)
 	}
 	rr.bg.Refresh()
