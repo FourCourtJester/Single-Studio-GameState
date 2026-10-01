@@ -17,6 +17,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -57,12 +58,6 @@ var (
 
 func sectionHeading(text string) *widget.Label {
 	return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-}
-
-// footerStyle matches the links' size (Fyne can't shrink link text).
-var footerStyle = widget.RichTextStyle{
-	Inline:    true,
-	ColorName: theme.ColorNameDisabled,
 }
 
 // help is the setup hint shown under the game picker for one game. url is
@@ -240,12 +235,14 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 		container.NewBorder(container.NewBorder(nil, nil, errTitle, clear), nil, nil, nil, p.errList)))
 	p.errPane.Hide()
 
-	footer := widget.NewRichText(
-		&widget.HyperlinkSegment{Text: "Single Studio", URL: singleStudioRepo, Alignment: fyne.TextAlignCenter},
-		&widget.TextSegment{Text: " · ", Style: footerStyle},
-		&widget.HyperlinkSegment{Text: "GameState", URL: gameStateRepo},
-		&widget.TextSegment{Text: " on GitHub", Style: footerStyle},
-	)
+	// GitHub's mark says where the links go, in place of "on GitHub".
+	dot := canvas.NewText("·", theme.Color(theme.ColorNameDisabled))
+	footerRow := container.NewCenter(container.New(layout.NewCustomPaddedHBoxLayout(0),
+		widget.NewIcon(githubIcon),
+		widget.NewHyperlink("Single Studio", singleStudioRepo),
+		container.NewCenter(dot),
+		widget.NewHyperlink("GameState", gameStateRepo),
+	))
 
 	win.SetContent(container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, p.themeBtn, header),
@@ -261,7 +258,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 		p.meta,
 		p.errPane,
 		widget.NewSeparator(),
-		footer,
+		footerRow,
 	)))
 	p.applyTheme()
 	p.Refresh()

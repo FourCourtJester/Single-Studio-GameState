@@ -66,7 +66,11 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           [[ "$GITHUB_REF_TYPE" == tag ]] || version=0.0.0
-          fyne package --target ${{ matrix.target }} --release --app-version "$version" --app-build "$GITHUB_RUN_NUMBER"
+          # Windows icons hold at most 256x256 and fyne embeds the source as a
+          # single image, so Windows gets its own 256px copy of the logo.
+          icon=Icon.png
+          [[ "${{ matrix.target }}" == windows ]] && icon=Icon-windows.png
+          fyne package --target ${{ matrix.target }} --release --icon "$icon" --app-version "$version" --app-build "$GITHUB_RUN_NUMBER"
           mkdir -p ../../dist
           out="../../dist/Single-Studio-GameState-${{ matrix.name }}"
           case "${{ matrix.target }}" in
