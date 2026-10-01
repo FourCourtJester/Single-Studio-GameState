@@ -120,7 +120,8 @@ to use for the selected game, with a link to that game's own guide.
 | `-game-port` | `gamePorts`      | each title's default, or the port set in the window | the `-game` game; `gamePorts` maps game ID to port, e.g. `{"rl": 49125}` |
 | (none)       | `allowedOrigins` | `["*"]`                 | relay      |
 
-Every listener binds to 127.0.0.1 by default, so nothing is reachable from
+Every listener binds to 127.0.0.1 by default (and IPv6's ::1 alongside it,
+so `localhost` works whichever it resolves to), so nothing is reachable from
 the network. The default ports are provisional.
 
 ## Wire format

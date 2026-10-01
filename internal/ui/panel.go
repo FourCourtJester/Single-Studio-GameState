@@ -246,23 +246,30 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 
 	win.SetContent(container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, p.themeBtn, header),
-		widget.NewSeparator(),
+		divider(),
 		sectionHeading("Choose a Game"),
 		p.game,
 		p.helpBox,
 		p.gamePort.row,
-		widget.NewSeparator(),
+		divider(),
 		sectionHeading("Broadcasting"),
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
 		p.bcast.row,
 		p.meta,
 		p.errPane,
-		widget.NewSeparator(),
+		divider(),
 		footerRow,
 	)))
 	p.applyTheme()
 	p.Refresh()
 	return p
+}
+
+// divider separates the panel's sections, with room above and below so it
+// doesn't sit tight against the rows around it.
+func divider() fyne.CanvasObject {
+	pad := theme.Padding() * 2
+	return container.New(layout.NewCustomPaddedLayout(pad, pad, 0, 0), widget.NewSeparator())
 }
 
 // Show sizes the window to its content and shows it.

@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -77,8 +79,26 @@ func (r *Receiver) Handler(emit func([]byte)) http.Handler {
 }
 
 // Listen opens a TCP listener on addr, explaining the common failure in
-// plain words.
+// plain words. On 127.0.0.1 it also listens on IPv6's loopback, ::1, where it
+// can: Windows resolves "localhost" to ::1 first, and not every client tries
+// 127.0.0.1 after that is refused.
 func Listen(addr string) (net.Listener, error) {
+	ln, err := listen(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host, _, _ := net.SplitHostPort(addr); host != "127.0.0.1" {
+		return ln, nil
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	v6, err := net.Listen("tcp", net.JoinHostPort("::1", strconv.Itoa(port)))
+	if err != nil {
+		return ln, nil // no IPv6, or ::1 taken: 127.0.0.1 still works
+	}
+	return newMultiListener(ln, v6), nil
+}
+
+func listen(addr string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err == nil {
 		return ln, nil
@@ -92,6 +112,64 @@ func Listen(addr string) (net.Listener, error) {
 	}
 	return nil, fmt.Errorf("can't listen on %s: %w", addr, err)
 }
+
+// multiListener accepts from several listeners as one.
+type multiListener struct {
+	lns   []net.Listener
+	conns chan accepted
+	done  chan struct{}
+	once  sync.Once
+}
+
+type accepted struct {
+	conn net.Conn
+	err  error
+}
+
+func newMultiListener(lns ...net.Listener) *multiListener {
+	m := &multiListener{lns: lns, conns: make(chan accepted), done: make(chan struct{})}
+	for _, ln := range lns {
+		go func() {
+			for {
+				c, err := ln.Accept()
+				select {
+				case m.conns <- accepted{c, err}:
+				case <-m.done:
+					if c != nil {
+						c.Close()
+					}
+					return
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	return m
+}
+
+func (m *multiListener) Accept() (net.Conn, error) {
+	select {
+	case a := <-m.conns:
+		return a.conn, a.err
+	case <-m.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (m *multiListener) Close() error {
+	m.once.Do(func() {
+		close(m.done)
+		for _, ln := range m.lns {
+			ln.Close()
+		}
+	})
+	return nil
+}
+
+// Addr is the first listener's address, 127.0.0.1's.
+func (m *multiListener) Addr() net.Addr { return m.lns[0].Addr() }
 
 // serve runs an HTTP server on ln until ctx is cancelled.
 func serve(ctx context.Context, ln net.Listener, h http.Handler) error {

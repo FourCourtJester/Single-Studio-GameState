@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -288,11 +290,82 @@ func TestPortOverride(t *testing.T) {
 		t.Errorf("cs2 override: %s", got)
 	}
 	a, _ = New(RL, Options{Log: quiet})
-	if got := a.(*WSClient).URL; got != "ws://127.0.0.1:49124" {
+	if got := a.(*WSClient).URL; got != "ws://localhost:49124" {
 		t.Errorf("rl default: %s", got)
 	}
 	a, _ = New(SC2, Options{Port: 7000, Interval: time.Second, Log: quiet})
-	if got := a.(*Poller).Endpoints[0].URL; got != "http://127.0.0.1:7000/game" {
+	if got := a.(*Poller).Endpoints[0].URL; got != "http://localhost:7000/game" {
 		t.Errorf("sc2 override: %s", got)
+	}
+}
+
+func TestListenAnswersOnBothLoopbacks(t *testing.T) {
+	ln, err := Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if _, ok := ln.(*multiListener); !ok {
+		t.Skip("no IPv6 loopback here")
+	}
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	for _, host := range []string{"127.0.0.1", "::1", "localhost"} {
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second)
+		if err != nil {
+			t.Errorf("%s: %v", host, err)
+			continue
+		}
+		c.Close()
+	}
+	ln.Close()
+	if _, err := ln.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Errorf("Accept after Close: %v", err)
+	}
+}
+
+func TestMultiListenerAcceptsFromEach(t *testing.T) {
+	var lns []net.Listener
+	for range 2 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lns = append(lns, ln)
+	}
+	m := newMultiListener(lns...)
+	defer m.Close()
+	for _, ln := range lns {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		got, err := m.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.LocalAddr().String() != ln.Addr().String() {
+			t.Errorf("accepted on %s, want %s", got.LocalAddr(), ln.Addr())
+		}
+		got.Close()
+	}
+	if m.Addr() != lns[0].Addr() {
+		t.Errorf("Addr = %s, want the first listener's", m.Addr())
+	}
+	m.Close()
+	if _, err := m.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Errorf("Accept after Close: %v", err)
+	}
+	if _, err := net.Dial("tcp", lns[1].Addr().String()); err == nil {
+		t.Error("Close should close every listener")
 	}
 }

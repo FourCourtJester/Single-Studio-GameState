@@ -86,8 +86,10 @@ func New(game string, o Options) (Adapter, error) {
 	if t, ok := Lookup(game); ok && port == 0 {
 		port = t.DefaultPort
 	}
-	local := func(scheme string) string { // where a game on this machine serves its feed
-		return scheme + "://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	// Where a game on this machine serves its feed. "localhost" rather than
+	// 127.0.0.1: a game may listen on IPv6's ::1 only, and Go tries both.
+	local := func(scheme string) string {
+		return scheme + "://" + net.JoinHostPort("localhost", strconv.Itoa(port))
 	}
 
 	switch game {

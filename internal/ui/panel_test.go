@@ -315,6 +315,10 @@ func TestGamePickerList(t *testing.T) {
 
 func TestOpenListFitsInWindow(t *testing.T) {
 	f := newFixture(t)
+	// Shorten the panel so the open list can't fit inside it as it stands.
+	f.panel.bcast.row.Hide()
+	f.panel.meta.Hide()
+	f.panel.Show()
 	before := f.win.Canvas().Size().Height
 	test.Tap(f.panel.game)
 	popup := f.panel.game.popup

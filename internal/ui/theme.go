@@ -36,6 +36,13 @@ func (t panelTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.C
 			return color.NRGBA{0x80, 0x80, 0x8a, 0xff}
 		}
 		return color.NRGBA{0x71, 0x71, 0x7a, 0xff}
+	case theme.ColorNameSeparator:
+		// Section dividers stand out: white on the dark background, and
+		// the text colour on the light one, where white would vanish.
+		if dark {
+			return color.White
+		}
+		return theme.DefaultTheme().Color(theme.ColorNameForeground, t.variant)
 	}
 	return theme.DefaultTheme().Color(name, t.variant)
 }
