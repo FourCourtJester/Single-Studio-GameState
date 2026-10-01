@@ -135,9 +135,18 @@ selected in the window. A newly connected client immediately receives the
 latest message; switching games clears it, so a client never gets the
 previous game's data.
 
-The one exception is StarCraft II, whose client API answers on two
-addresses (`/game` and `/ui`). Each poll combines the two answers into one
-message, `{"game": ..., "ui": ...}`, so a tick arrives as a single update.
+The one addition is for games read over more than one address. StarCraft II's
+client API answers on two (`/game` and `/ui`); each is polled and sent as its
+own message, with one field added at the root so Single Studio can tell the
+two apart whatever their shape:
+
+```json
+{"_ssg": "game", ...the game's /game response...}
+{"_ssg": "ui", ...the game's /ui response...}
+```
+
+Every other byte is the game's own. Games with a single address get nothing
+added.
 
 Full payloads are sent on every tick, and Yjs only emits updates for keys
 that changed.

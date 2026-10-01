@@ -64,7 +64,7 @@ func TestNewCoversEveryGame(t *testing.T) {
 	}
 }
 
-func TestPollerCombinesEndpoints(t *testing.T) {
+func TestPollerEmitsEachEndpointTagged(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/game":
@@ -86,10 +86,50 @@ func TestPollerCombinesEndpoints(t *testing.T) {
 	c := newCollector()
 	go p.Run(ctx, c.emit)
 
-	got := c.wait(t)
-	want := `{"game":{"isReplay":false,"displayTime":12.5},"ui":{"activeScreens":[]}}`
-	if string(got) != want {
-		t.Fatalf("got %s, want %s", got, want)
+	c.wait(t)
+	c.wait(t)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	want := []string{
+		`{"_ssg":"game","isReplay":false,"displayTime":12.5}`,
+		`{"_ssg":"ui","activeScreens":[]}`,
+	}
+	for i, w := range want {
+		if string(c.got[i]) != w {
+			t.Errorf("message %d: got %s, want %s", i, c.got[i], w)
+		}
+	}
+}
+
+func TestSingleEndpointIsUntouched(t *testing.T) {
+	body := `{ "activePlayer": {"level": 3} }`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	p := &Poller{Client: srv.Client(), Interval: time.Hour, Endpoints: []Endpoint{{Name: "all", URL: srv.URL}}, Log: quiet}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := newCollector()
+	go p.Run(ctx, c.emit)
+	if got := c.wait(t); string(got) != body {
+		t.Fatalf("got %s, want it byte for byte: %s", got, body)
+	}
+}
+
+func TestTag(t *testing.T) {
+	cases := map[string]string{
+		`{"a":1}`:                 `{"_ssg":"ui","a":1}`,
+		`{}`:                      `{"_ssg":"ui"}`,
+		"  {\n  \"a\": [1, 2]\n}": "{\"_ssg\":\"ui\",\"a\": [1, 2]\n}", // the game's own spacing is kept
+		`[1,2]`:                   `[1,2]`,                             // not an object: left alone
+		`not json`:                `not json`,
+	}
+	for in, want := range cases {
+		if got := string(tag([]byte(in), "ui")); got != want {
+			t.Errorf("tag(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

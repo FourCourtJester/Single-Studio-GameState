@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -25,17 +26,21 @@ const (
 	lolURL  = "https://" + lolHost + "/liveclientdata/allgamedata"
 )
 
+// TagKey is the one field GameState adds to a game's messages, and only for
+// games read over more than one address: it names the address a message
+// came from (StarCraft II's "game" or "ui"), so Single Studio can tell the
+// updates apart whatever their shape.
+const TagKey = "_ssg"
+
 // Endpoint is one URL a Poller fetches each tick.
 type Endpoint struct {
-	Name string
+	Name string // used as the TagKey value when there are several endpoints
 	URL  string
 }
 
-// Poller fetches its endpoints on a timer and emits the result.
-//
-// With one endpoint the response body is emitted verbatim. With several, the
-// bodies are combined into one JSON object keyed by endpoint name, so a tick
-// is always a single payload.
+// Poller fetches its endpoints on a timer and emits each response as its
+// own message, unchanged. With several endpoints, each message gets a TagKey
+// field naming its endpoint.
 type Poller struct {
 	Client    *http.Client
 	Endpoints []Endpoint
@@ -51,21 +56,18 @@ func (p *Poller) Run(ctx context.Context, emit func([]byte)) error {
 
 	up, first := false, true
 	for {
-		data, err := p.poll(ctx)
+		ok, err := p.poll(ctx, emit)
 		switch {
 		case ctx.Err() != nil:
 			return nil
-		case err != nil:
+		case !ok:
 			if up || first {
 				p.Log.Info("source unavailable, waiting", "err", err)
 			}
 			up = false
-		default:
-			if !up {
-				p.Log.Info("source connected")
-			}
+		case !up:
+			p.Log.Info("source connected")
 			up = true
-			emit(data)
 		}
 		first = false
 
@@ -77,22 +79,43 @@ func (p *Poller) Run(ctx context.Context, emit func([]byte)) error {
 	}
 }
 
-func (p *Poller) poll(ctx context.Context) ([]byte, error) {
-	if len(p.Endpoints) == 1 {
-		return p.fetch(ctx, p.Endpoints[0].URL)
-	}
-	combined := make(map[string]json.RawMessage, len(p.Endpoints))
+// poll fetches every endpoint once and emits each response that arrives.
+// It reports whether any did, and the first error.
+func (p *Poller) poll(ctx context.Context, emit func([]byte)) (bool, error) {
+	var ok bool
+	var firstErr error
 	for _, ep := range p.Endpoints {
 		body, err := p.fetch(ctx, ep.URL)
 		if err != nil {
-			return nil, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
-		if !json.Valid(body) {
-			return nil, fmt.Errorf("%s: response is not JSON", ep.URL)
+		if len(p.Endpoints) > 1 {
+			body = tag(body, ep.Name)
 		}
-		combined[ep.Name] = body
+		emit(body)
+		ok = true
 	}
-	return json.Marshal(combined)
+	return ok, firstErr
+}
+
+// tag adds TagKey: name as the first field of a JSON object, leaving every
+// other byte as the game sent it. Anything that isn't a JSON object is
+// returned unchanged.
+func tag(body []byte, name string) []byte {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) {
+		return body
+	}
+	value, _ := json.Marshal(name)
+	rest := bytes.TrimLeft(trimmed[1:], " \t\r\n")
+	out := append([]byte(`{"`+TagKey+`":`), value...)
+	if rest[0] != '}' {
+		out = append(out, ',')
+	}
+	return append(out, rest...)
 }
 
 func (p *Poller) fetch(ctx context.Context, url string) ([]byte, error) {
