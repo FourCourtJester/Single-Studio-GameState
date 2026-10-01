@@ -1,4 +1,4 @@
-// Package ui is the companion's window: an on/off switch, a game picker and
+// Package ui is GameState's window: an on/off switch, a game picker and
 // an error pane that appears only when something has gone wrong.
 package ui
 
@@ -21,7 +21,7 @@ import (
 
 const (
 	// Title heads the window and its title bar.
-	Title = "Single Studio: GameState"
+	Title = "Single Studio - GameState"
 	// Width is the window's starting width.
 	Width = 400
 	// maxShownErrors caps the pane; repeats already fold into one line.
@@ -31,7 +31,7 @@ const (
 	resizeSettle = 300 * time.Millisecond
 )
 
-// Panel is the companion's window content.
+// Panel is GameState's window content.
 type Panel struct {
 	ctrl     *control.Controller
 	errs     *control.ErrorLog

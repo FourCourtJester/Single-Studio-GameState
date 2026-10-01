@@ -18,7 +18,7 @@ import (
 var iconPNG []byte
 
 // appID identifies the app to the OS; it must match FyneApp.toml.
-const appID = "com.singlestudio.companion"
+const appID = "com.singlestudio.gamestate"
 
 type window struct {
 	ctrl     *control.Controller
@@ -33,8 +33,8 @@ type window struct {
 	errc     <-chan error
 }
 
-// runWindow shows the companion's window and blocks until it is closed or
-// ctx is cancelled. Closing the window quits the companion.
+// runWindow shows GameState's window and blocks until it is closed or
+// ctx is cancelled. Closing the window quits GameState.
 func runWindow(ctx context.Context, w window) {
 	a := app.NewWithID(appID)
 	a.SetIcon(fyne.NewStaticResource("Icon.png", iconPNG))

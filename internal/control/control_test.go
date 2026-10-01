@@ -65,7 +65,7 @@ func TestStartStopAndSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.State().Running {
-		t.Fatal("selecting a game must not turn the companion on")
+		t.Fatal("selecting a game must not turn GameState on")
 	}
 	if err := c.Start(); err != nil {
 		t.Fatal(err)

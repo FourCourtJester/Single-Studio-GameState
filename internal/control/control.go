@@ -58,7 +58,7 @@ func (c *Controller) State() State {
 	return s
 }
 
-// Select picks the game. If the companion is on, it switches over at once;
+// Select picks the game. If GameState is on, it switches over at once;
 // the old game's namespace is left in place in Single Studio.
 func (c *Controller) Select(game string) error {
 	if _, ok := adapter.Lookup(game); !ok {
@@ -81,7 +81,7 @@ func (c *Controller) Select(game string) error {
 	return nil
 }
 
-// Start turns the companion on for the selected game. Failures are logged,
+// Start turns GameState on for the selected game. Failures are logged,
 // which puts them in the error pane, as well as returned.
 func (c *Controller) Start() error {
 	c.op.Lock()
@@ -89,7 +89,7 @@ func (c *Controller) Start() error {
 	return c.start()
 }
 
-// Stop turns the companion off and waits for the adapter to let go of its
+// Stop turns GameState off and waits for the adapter to let go of its
 // ports.
 func (c *Controller) Stop() {
 	c.op.Lock()

@@ -8,7 +8,7 @@ on:
 
 env:
   FYNE_CLI: fyne.io/tools/cmd/fyne@v1.7.3
-  APP: Single Studio Companion
+  APP: Single Studio - GameState
 
 jobs:
   test:
@@ -57,7 +57,7 @@ jobs:
         run: go install ${{ env.FYNE_CLI }}
       - name: Package
         shell: bash
-        working-directory: cmd/companion
+        working-directory: cmd/gamestate
         env:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
@@ -66,7 +66,7 @@ jobs:
           [[ "$GITHUB_REF_TYPE" == tag ]] || version=0.0.0
           fyne package --target ${{ matrix.target }} --release --app-version "$version" --app-build "$GITHUB_RUN_NUMBER"
           mkdir -p ../../dist
-          out="../../dist/SingleStudioCompanion-${{ matrix.name }}"
+          out="../../dist/Single-Studio-GameState-${{ matrix.name }}"
           case "${{ matrix.target }}" in
             windows) mv "$APP.exe" "$out.exe" ;;
             darwin)  ditto -c -k --keepParent "$APP.app" "$out.zip" ;;
@@ -75,7 +75,7 @@ jobs:
           ls -la ../../dist
       - uses: actions/upload-artifact@v4
         with:
-          name: SingleStudioCompanion-${{ matrix.name }}
+          name: Single-Studio-GameState-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 

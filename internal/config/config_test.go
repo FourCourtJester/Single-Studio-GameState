@@ -40,7 +40,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestLoadOverDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "companion.json")
+	path := filepath.Join(t.TempDir(), "gamestate.json")
 	os.WriteFile(path, []byte(`{"game":"lol","interval":"250ms"}`), 0o644)
 
 	cfg, err := Load(path)

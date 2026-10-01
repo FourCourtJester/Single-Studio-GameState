@@ -1,4 +1,4 @@
-// Command companion is the Single Studio Companion: a local relay that reads
+// Command gamestate is Single Studio - GameState: a local relay that reads
 // game state feeds a browser cannot reach and pushes the raw payloads to
 // Single Studio over one WebSocket.
 package main
@@ -27,11 +27,11 @@ import (
 	"github.com/fourcourtjester/single-studio-gamestate/internal/relay"
 )
 
-const usage = `Single Studio Companion
+const usage = `Single Studio - GameState
 
 Usage:
-  companion [flags]             run the companion and open its window
-  companion gsi-config [flags]  print the CS2 / Dota 2 GSI config file
+  gamestate [flags]             run GameState and open its window
+  gamestate gsi-config [flags]  print the CS2 / Dota 2 GSI config file
 
 Games: apex, sc2, lol, cs2, dota2, war3
 
@@ -43,7 +43,7 @@ func main() {
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(os.Stderr, "companion:", err)
+			fmt.Fprintln(os.Stderr, "gamestate:", err)
 		}
 		os.Exit(1)
 	}
@@ -84,7 +84,7 @@ func parseConfig(args []string) (cfg config.Config, noWindow bool, err error) {
 }
 
 func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
-	fs := flag.NewFlagSet("companion", flag.ContinueOnError)
+	fs := flag.NewFlagSet("gamestate", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
@@ -122,13 +122,13 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	errs := &control.ErrorLog{}
 	log := slog.New(errs.Handler(slog.NewTextHandler(os.Stderr, nil)))
 	if !cfg.Loopback() {
-		log.Warn("binding beyond loopback: the companion is reachable from the network", "bind", cfg.Bind)
+		log.Warn("binding beyond loopback: GameState is reachable from the network", "bind", cfg.Bind)
 	}
 
 	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
 	ln, listenErr := adapter.Listen(addr)
 	if listenErr != nil {
-		// Most likely the companion is already running: bring its window
+		// Most likely GameState is already running: bring its window
 		// forward instead of opening a second one.
 		if gui && showRunning(addr) {
 			return nil
@@ -242,7 +242,7 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	return err
 }
 
-// showRunning asks a companion already listening on addr to bring its
+// showRunning asks a GameState instance already listening on addr to bring its
 // window forward, and reports whether one answered.
 func showRunning(addr string) bool {
 	client := &http.Client{Timeout: time.Second}

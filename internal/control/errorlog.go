@@ -57,8 +57,8 @@ func (l *ErrorLog) Clear() {
 	l.entries = nil
 }
 
-// Handler wraps next so every warning or error logged anywhere in the
-// companion also lands in the error pane.
+// Handler wraps next so every warning or error logged anywhere in
+// GameState also lands in the error pane.
 func (l *ErrorLog) Handler(next slog.Handler) slog.Handler {
 	return &captureHandler{next: next, log: l}
 }

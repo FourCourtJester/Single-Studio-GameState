@@ -1,6 +1,6 @@
 /dist/
-/companion
-cmd/companion/companion
+/gamestate
+cmd/gamestate/gamestate
 *.exe
 *.app/
 *.tar.xz

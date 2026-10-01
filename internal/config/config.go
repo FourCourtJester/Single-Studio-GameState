@@ -1,4 +1,4 @@
-// Package config holds the companion's user-facing settings. Defaults are
+// Package config holds GameState's user-facing settings. Defaults are
 // chosen so that an untouched install works: only the game needs picking.
 package config
 
@@ -24,7 +24,7 @@ const (
 // MinInterval caps polling at 20 Hz.
 const MinInterval = 50 * time.Millisecond
 
-// Config is the companion's configuration, loadable from JSON.
+// Config is GameState's configuration, loadable from JSON.
 type Config struct {
 	Game           string   `json:"game"`
 	Bind           string   `json:"bind"`
@@ -38,7 +38,7 @@ type Config struct {
 }
 
 // Default returns the default configuration. Everything binds to
-// 127.0.0.1 so the companion is never exposed on the network.
+// 127.0.0.1 so GameState is never exposed on the network.
 func Default() Config {
 	return Config{
 		Bind:           "127.0.0.1",
@@ -87,7 +87,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Loopback reports whether the companion only listens on this machine.
+// Loopback reports whether GameState only listens on this machine.
 func (c Config) Loopback() bool {
 	ip := net.ParseIP(c.Bind)
 	return ip != nil && ip.IsLoopback()
@@ -113,7 +113,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// State is what the companion remembers between runs.
+// State is what GameState remembers between runs.
 type State struct {
 	Game  string `json:"game"`
 	Theme string `json:"theme,omitempty"` // "light" or "dark" (the default)
@@ -125,7 +125,7 @@ func StatePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "SingleStudioCompanion", "state.json"), nil
+	return filepath.Join(dir, "Single Studio - GameState", "state.json"), nil
 }
 
 // LoadState reads remembered state. A missing or unreadable file is an

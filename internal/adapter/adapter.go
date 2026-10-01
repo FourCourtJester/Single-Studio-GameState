@@ -1,4 +1,4 @@
-// Package adapter holds the only game-specific code in the companion:
+// Package adapter holds the only game-specific code in GameState:
 // acquisition. Each adapter gets data however its title requires (polling,
 // receiving HTTP, hosting a WebSocket) and hands raw payloads to emit.
 package adapter
@@ -32,7 +32,7 @@ const (
 	War3  = "war3"
 )
 
-// Title is a game the companion knows about, as shown in the game picker.
+// Title is a game GameState knows about, as shown in the game picker.
 type Title struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`

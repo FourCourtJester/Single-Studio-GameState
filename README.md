@@ -1,16 +1,16 @@
-# Single Studio Companion
+# Single Studio - GameState
 
 A small local relay for game state feeds that a browser cannot read directly.
 It acquires each game's data however that game requires, then pushes the raw
 payloads to Single Studio over one local WebSocket. All shaping happens in
-Single Studio; the companion does no diffing or transforming.
+Single Studio; GameState does no diffing or transforming.
 
-The companion is optional and separate from Single Studio. You only need it
+GameState is optional and separate from Single Studio. You only need it
 for the titles below.
 
 ## Supported titles
 
-| Title             | Namespace | How the companion gets the data                        | Status          |
+| Title             | Namespace | How GameState gets the data                        | Status          |
 | ----------------- | --------- | ------------------------------------------------------ | --------------- |
 | Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | Implemented     |
 | StarCraft II      | `sc2`     | Polls the client API `/game` and `/ui` on localhost:6119 | Implemented     |
@@ -26,10 +26,10 @@ Grab the build for your system from the
 
 | System                | File                                        | To run                                   |
 | --------------------- | ------------------------------------------- | ---------------------------------------- |
-| Windows               | `SingleStudioCompanion-windows-amd64.exe`   | Double-click it                          |
-| Mac (Apple Silicon)   | `SingleStudioCompanion-macos-arm64.zip`     | Unzip, then open the app                 |
-| Mac (Intel)           | `SingleStudioCompanion-macos-intel.zip`     | Unzip, then open the app                 |
-| Linux                 | `SingleStudioCompanion-linux-amd64.tar.xz`  | Extract and run `usr/local/bin/companion`, or `make user-install` for a menu entry |
+| Windows               | `Single-Studio-GameState-windows-amd64.exe`   | Double-click it                          |
+| Mac (Apple Silicon)   | `Single-Studio-GameState-macos-arm64.zip`     | Unzip, then open the app                 |
+| Mac (Intel)           | `Single-Studio-GameState-macos-intel.zip`     | Unzip, then open the app                 |
+| Linux                 | `Single-Studio-GameState-linux-amd64.tar.xz`  | Extract and run `usr/local/bin/gamestate`, or `make user-install` for a menu entry |
 
 The builds are not code-signed yet. On Windows, SmartScreen may warn on first
 launch ("More info" → "Run anyway"). On a Mac, right-click the app and choose
@@ -37,9 +37,9 @@ launch ("More info" → "Run anyway"). On a Mac, right-click the app and choose
 
 ## Usage
 
-Opening the companion shows its window:
+Opening GameState shows its window:
 
-![Companion window](docs/panel.png)
+![GameState window](docs/panel.png)
 
 - **Game:** pick the title you're streaming. The choice is remembered.
 - **On/off:** start or stop relaying. Switching games while on swaps over
@@ -49,8 +49,8 @@ Opening the companion shows its window:
   cleared, unless you've resized the window yourself.
 
 The window is dark by default; the button in its corner switches to light, and
-the choice is remembered. The companion runs for as long as the window is
-open: minimise it while you stream, close it to quit. Opening the companion
+the choice is remembered. GameState runs for as long as the window is
+open: minimise it while you stream, close it to quit. Opening GameState
 again while it's running brings the existing window forward.
 
 Single Studio connects to `ws://127.0.0.1:47600/ws`. `GET /status` reports the
@@ -60,9 +60,9 @@ arrived.
 For headless use (a server, or scripting), `-no-window` runs without a window:
 
 ```sh
-companion -no-window -game sc2                 # relay StarCraft II immediately
-companion -no-window -game sc2 -interval 250ms # poll at 4 Hz
-companion -no-window -config companion.json    # read settings from a file; flags still win
+gamestate -no-window -game sc2                 # relay StarCraft II immediately
+gamestate -no-window -game sc2 -interval 250ms # poll at 4 Hz
+gamestate -no-window -config gamestate.json    # read settings from a file; flags still win
 ```
 
 ### Per-game setup
@@ -71,16 +71,16 @@ companion -no-window -config companion.json    # read settings from a file; flag
   says:
 
   ```sh
-  companion gsi-config -game cs2 > gamestate_integration_singlestudio.cfg
+  gamestate gsi-config -game cs2 > gamestate_integration_singlestudio.cfg
   ```
 
-  Add `-gsi-token <secret>` to both commands to require a token. The companion
+  Add `-gsi-token <secret>` to both commands to require a token. GameState
   strips the token before relaying.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
   JSON payloads are relayed as-is. Protobuf payloads are relayed base64-encoded.
-- **StarCraft II and League:** no setup. Start a game or replay and the
-  companion picks it up.
+- **StarCraft II and League:** no setup. Start a game or replay and
+  GameState picks it up.
 
 ### Settings
 
@@ -108,7 +108,7 @@ Each WebSocket message is one JSON envelope:
 ```
 
 - `ns` is the game namespace. Single Studio saves `data` under it.
-- `ts` is the time the companion received the payload, in Unix milliseconds.
+- `ts` is the time GameState received the payload, in Unix milliseconds.
 - `data` is the payload verbatim when it is JSON. Otherwise it is a base64
   string and `"encoding": "base64"` is set.
 
@@ -124,7 +124,7 @@ Linux, the OpenGL and X11/Wayland headers:
 ```sh
 sudo apt-get install gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
 go test -race ./...
-go run ./cmd/companion
+go run ./cmd/gamestate
 ```
 
 Each OS is built on its own machine. CI does this for every push, and pushing
@@ -132,7 +132,7 @@ a `v*` tag publishes the builds as a GitHub Release. To package locally:
 
 ```sh
 go install fyne.io/tools/cmd/fyne@v1.7.3
-cd cmd/companion && fyne package --target linux --release   # or windows / darwin on those systems
+cd cmd/gamestate && fyne package --target linux --release   # or windows / darwin on those systems
 ```
 
 `PANEL_SHOTS=<dir> go test -run Screenshots ./internal/ui` renders the window
@@ -140,7 +140,7 @@ in each state to PNGs, for checking visual changes.
 
 Layout:
 
-- `cmd/companion`: flags, the relay server, the window and the `gsi-config` command
+- `cmd/gamestate`: flags, the relay server, the window and the `gsi-config` command
 - `internal/relay`: the envelope and the WebSocket fan-out hub
 - `internal/adapter`: per-title acquisition (poll, receive HTTP, host a WebSocket)
 - `internal/gsi`: CS2 / Dota 2 GSI config generation

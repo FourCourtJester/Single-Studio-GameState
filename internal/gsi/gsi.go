@@ -1,5 +1,5 @@
 // Package gsi generates the Game State Integration config files that point
-// CS2 and Dota 2 at the companion's receiver.
+// CS2 and Dota 2 at GameState's receiver.
 package gsi
 
 import (
@@ -41,7 +41,7 @@ func Config(game, uri, token string) (string, error) {
 	}
 
 	var b strings.Builder
-	b.WriteString("\"Single Studio Companion\"\n{\n")
+	b.WriteString("\"Single Studio - GameState\"\n{\n")
 	fmt.Fprintf(&b, "\t\"uri\"\t\t%q\n", uri)
 	b.WriteString("\t\"timeout\"\t\"5.0\"\n")
 	b.WriteString("\t\"buffer\"\t\"0.1\"\n")
