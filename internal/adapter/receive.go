@@ -18,8 +18,8 @@ import (
 const maxGSIBody = 4 << 20
 
 // Receiver is an HTTP server the game POSTs to. CS2 and Dota 2 Game State
-// Integration both work this way; see the gsi package for the config file
-// that points the game at it.
+// Integration both work this way. The user's own GSI config file points the
+// game at it; writing that file is outside this app.
 type Receiver struct {
 	Addr  string
 	Token string // when set, payloads must carry this auth token
@@ -70,7 +70,7 @@ func (r *Receiver) Handler(emit func([]byte)) http.Handler {
 		}
 		body, ok := checkAuth(body, r.Token)
 		if !ok {
-			reject(w, "auth token does not match; regenerate the GSI config file", http.StatusUnauthorized)
+			reject(w, "auth token does not match the one set with -gsi-token", http.StatusUnauthorized)
 			return
 		}
 		lastReject.Store(nil)

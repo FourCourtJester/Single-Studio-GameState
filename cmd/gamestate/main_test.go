@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
@@ -34,22 +33,11 @@ func TestFlagsOverrideConfigFile(t *testing.T) {
 	}
 }
 
-func TestGSIConfigCommand(t *testing.T) {
-	var out strings.Builder
-	err := run(context.Background(), []string{"gsi-config", "-game", "cs2", "-gsi-port", "5000"}, &out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "http://127.0.0.1:5000/") || !strings.Contains(out.String(), "game/csgo/cfg") {
-		t.Fatalf("unexpected output:\n%s", out.String())
-	}
-}
-
 func TestServeStopsOnCancel(t *testing.T) {
 	args := []string{"-no-window", "-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error)
-	go func() { errc <- run(ctx, args, nil) }()
+	go func() { errc <- run(ctx, args) }()
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	select {

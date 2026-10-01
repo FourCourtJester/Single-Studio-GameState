@@ -9,7 +9,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -23,15 +22,13 @@ import (
 	"github.com/fourcourtjester/single-studio-gamestate/internal/adapter"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/config"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/control"
-	"github.com/fourcourtjester/single-studio-gamestate/internal/gsi"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/relay"
 )
 
 const usage = `Single Studio - GameState
 
 Usage:
-  gamestate [flags]             run GameState and open its window
-  gamestate gsi-config [flags]  print the CS2 / Dota 2 GSI config file
+  gamestate [flags]  run GameState and open its window
 
 Games: apex, sc2, lol, cs2, dota2, war3
 
@@ -41,7 +38,7 @@ Flags:
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
+	if err := run(ctx, os.Args[1:]); err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintln(os.Stderr, "gamestate:", err)
 		}
@@ -49,17 +46,10 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string, stdout io.Writer) error {
-	printGSI := len(args) > 0 && args[0] == "gsi-config"
-	if printGSI {
-		args = args[1:]
-	}
+func run(ctx context.Context, args []string) error {
 	cfg, noWindow, err := parseConfig(args)
 	if err != nil {
 		return err
-	}
-	if printGSI {
-		return printGSIConfig(cfg, stdout)
 	}
 	return serve(ctx, cfg, !noWindow)
 }
@@ -101,20 +91,6 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
 	err := fs.Parse(args)
 	return *path, *noWindow, err
-}
-
-func printGSIConfig(cfg config.Config, w io.Writer) error {
-	if cfg.Game == "" {
-		return errors.New("gsi-config needs -game cs2 or -game dota2")
-	}
-	uri := "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/"
-	out, err := gsi.Config(cfg.Game, uri, cfg.GSIToken)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "// Save as <%s install>/%s/%s\n", cfg.Game, gsi.InstallDir[cfg.Game], gsi.FileName)
-	_, err = io.WriteString(w, out)
-	return err
 }
 
 // serve runs the relay, with the window unless gui is false.

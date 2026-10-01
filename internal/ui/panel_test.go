@@ -193,7 +193,7 @@ func TestScreenshots(t *testing.T) {
 	shot("2-waiting")
 	f.ctrl.Stop()
 	f.errs.Add(time.Now(), "Counter-Strike 2 stopped: port 47601 is already in use by another program")
-	f.errs.Add(time.Now(), "rejected game state: auth token does not match; regenerate the GSI config file")
+	f.errs.Add(time.Now(), "rejected game state: auth token does not match the one set with -gsi-token")
 	shot("3-errors")
 	test.Tap(f.panel.themeBtn)
 	shot("4-errors-light")

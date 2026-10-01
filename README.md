@@ -67,15 +67,12 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 
 ### Per-game setup
 
-- **CS2 / Dota 2:** generate the GSI config and save it where the first line
-  says:
-
-  ```sh
-  gamestate gsi-config -game cs2 > gamestate_integration_singlestudio.cfg
-  ```
-
-  Add `-gsi-token <secret>` to both commands to require a token. GameState
-  strips the token before relaying.
+- **CS2 / Dota 2:** the game only sends its state to the addresses listed in
+  your Game State Integration config file. Creating and managing that file
+  is up to you; GameState only needs its `uri` to be
+  `http://127.0.0.1:47601/`. If the file sets an auth token, start GameState
+  with the same `-gsi-token <secret>` and it will reject posts without it.
+  The token is stripped before relaying.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
   JSON payloads are relayed as-is. Protobuf payloads are relayed base64-encoded.
@@ -140,10 +137,9 @@ in each state to PNGs, for checking visual changes.
 
 Layout:
 
-- `cmd/gamestate`: flags, the relay server, the window and the `gsi-config` command
+- `cmd/gamestate`: flags, the relay server and the window
 - `internal/relay`: the envelope and the WebSocket fan-out hub
 - `internal/adapter`: per-title acquisition (poll, receive HTTP, host a WebSocket)
-- `internal/gsi`: CS2 / Dota 2 GSI config generation
 - `internal/config`: settings, defaults, validation and remembered choices
 - `internal/control`: starts, stops and switches the adapter; collects errors
 - `internal/ui`: the window's panel, its on/off switch and theme
