@@ -33,6 +33,7 @@ jobs:
           - name: windows-amd64
             os: windows-latest
             target: windows
+            goarch: amd64
           - name: macos-arm64
             os: macos-latest
             target: darwin
@@ -44,6 +45,7 @@ jobs:
           - name: linux-amd64
             os: ubuntu-latest
             target: linux
+            goarch: amd64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +71,14 @@ jobs:
           out="../../dist/Single-Studio-GameState-${{ matrix.name }}"
           case "${{ matrix.target }}" in
             windows) mv "$APP.exe" "$out.exe" ;;
-            darwin)  ditto -c -k --keepParent "$APP.app" "$out.zip" ;;
+            darwin)
+              # Both Mac builds run on Apple Silicon; make sure the Intel one
+              # really was cross-compiled.
+              want=$([[ "$GOARCH" == amd64 ]] && echo x86_64 || echo arm64)
+              got=$(lipo -archs "$APP.app/Contents/MacOS/"*)
+              echo "binary architecture: $got"
+              [[ "$got" == "$want" ]] || { echo "expected $want"; exit 1; }
+              ditto -c -k --keepParent "$APP.app" "$out.zip" ;;
             linux)   mv "$APP.tar.xz" "$out.tar.xz" ;;
           esac
           ls -la ../../dist
