@@ -183,3 +183,7 @@ Layout:
 - `internal/config`: settings, defaults, validation and remembered choices
 - `internal/control`: starts, stops and switches the adapter; collects errors
 - `internal/ui`: the window's panel, its on/off switch and theme
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
