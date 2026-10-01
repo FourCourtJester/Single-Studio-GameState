@@ -45,7 +45,8 @@ Opening GameState shows its window:
 
 ![GameState window](docs/panel.png)
 
-- **Game:** pick the title you're streaming. The choice is remembered.
+- **Game:** pick the title you're streaming; each has a coloured badge. The
+  choice is remembered.
 - **Game port:** for games whose port can change, the port GameState uses
   to reach that game, prefilled with its default. If you've changed the
   port in the game's own setup, enter the same one and press Apply. Each

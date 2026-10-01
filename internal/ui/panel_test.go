@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"image/png"
 	"io"
 	"log/slog"
@@ -90,7 +91,7 @@ func TestPowerNeedsAGame(t *testing.T) {
 	if !f.panel.power.Disabled() {
 		t.Fatal("switch should be disabled until a game is picked")
 	}
-	f.panel.game.SetSelected("Counter-Strike 2")
+	f.panel.game.choose(adapter.CS2) // as if picked from the open list
 	eventually(t, f, func() bool { return !f.panel.power.Disabled() })
 	if f.ctrl.State().Game != adapter.CS2 {
 		t.Fatalf("controller game = %q", f.ctrl.State().Game)
@@ -256,10 +257,9 @@ func TestGamePortBox(t *testing.T) {
 	}
 	f.panel.gamePort.entry.SetText("50124")
 	test.Tap(f.panel.gamePort.apply)
-	eventually(t, f, func() bool { return f.ctrl.Port(adapter.RL) == 50124 })
-	if !strings.Contains(f.panel.helpText.Text, "port 50124") {
-		t.Fatalf("help not updated: %q", f.panel.helpText.Text)
-	}
+	eventually(t, f, func() bool {
+		return f.ctrl.Port(adapter.RL) == 50124 && strings.Contains(f.panel.helpText.Text, "port 50124")
+	})
 
 	// Switching games shows that game's own port.
 	f.ctrl.Select(adapter.Apex)
@@ -287,6 +287,40 @@ func TestNoPortDisablesGameControls(t *testing.T) {
 	f.panel.SetPort(48000)
 	if f.panel.game.Disabled() || f.panel.power.Disabled() {
 		t.Fatal("game controls should work again once a port is open")
+	}
+}
+
+func TestGamePickerList(t *testing.T) {
+	f := newFixture(t)
+	if f.panel.game.Selected != "" {
+		t.Fatalf("selected %q before picking", f.panel.game.Selected)
+	}
+	test.Tap(f.panel.game)
+	if f.panel.game.popup == nil || !f.panel.game.popup.Visible() {
+		t.Fatal("list did not open")
+	}
+	rows := f.panel.game.popup.Content.(*fyne.Container).Objects
+	var names []string
+	for _, r := range rows {
+		names = append(names, r.(*pickerRow).title.Name)
+	}
+	if len(names) != 6 || names[0] != "Apex Legends" {
+		t.Fatalf("rows: %v (War3 should be left out)", names)
+	}
+	test.Tap(rows[4].(*pickerRow)) // Rocket League
+	eventually(t, f, func() bool { return f.ctrl.State().Game == adapter.RL })
+	if f.panel.game.popup != nil {
+		t.Fatal("list should close after picking")
+	}
+}
+
+func TestBadgeTextReadable(t *testing.T) {
+	for game, b := range badges {
+		fg := readableOn(b.color)
+		lum := 0.299*float64(b.color.R) + 0.587*float64(b.color.G) + 0.114*float64(b.color.B)
+		if (lum > 150) != (fg != color.White) {
+			t.Errorf("%s: text colour doesn't suit its badge", game)
+		}
 	}
 }
 
@@ -348,4 +382,10 @@ func TestScreenshots(t *testing.T) {
 	shot("5-dota")
 	f.ctrl.Select(adapter.RL)
 	shot("6-rl")
+	f.panel.Refresh()
+	test.Tap(f.panel.game)
+	img := f.win.Canvas().Capture() // shot() would refresh and close nothing; capture the open list as is
+	out, _ := os.Create(filepath.Join(dir, "7-picker-open.png"))
+	png.Encode(out, img)
+	out.Close()
 }

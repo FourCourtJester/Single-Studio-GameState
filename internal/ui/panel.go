@@ -95,10 +95,9 @@ type Panel struct {
 	// do runs a function on the UI thread; tests swap it for a queue.
 	do func(func())
 
-	dark     bool
-	updating bool
+	dark bool
 
-	game       *widget.Select
+	game       *GamePicker
 	power      *Switch
 	powerLabel *widget.Label
 	status     *widget.Label
@@ -143,14 +142,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 
 	gameCaption := widget.NewLabel("Game")
 	gameCaption.SizeName = theme.SizeNameCaptionText
-	var names []string
-	for _, t := range adapter.Titles {
-		if t.Available {
-			names = append(names, t.Name)
-		}
-	}
-	p.game = widget.NewSelect(names, p.onSelect)
-	p.game.PlaceHolder = "Choose a game…"
+	p.game = NewGamePicker(p.onSelect)
 
 	// Some games only send data once the user has set them up (a GSI file,
 	// an ini setting). That setup is theirs to do; say what GameState expects and
@@ -266,13 +258,11 @@ func (p *Panel) SetPort(port int) {
 func (p *Panel) Refresh() {
 	st := p.ctrl.State()
 
-	p.updating = true
 	if t, ok := adapter.Lookup(st.Game); ok && t.Available {
-		p.game.SetSelected(t.Name)
+		p.game.SetSelected(t.ID)
 	} else {
-		p.game.ClearSelected()
+		p.game.SetSelected("")
 	}
-	p.updating = false
 	gamePort := p.ctrl.Port(st.Game)
 	if h, ok := helpFor(st.Game, p.bind, gamePort); ok {
 		p.helpText.SetText(h.text)
@@ -396,21 +386,13 @@ func (p *Panel) fit() {
 	}
 }
 
-func (p *Panel) onSelect(name string) {
-	if p.updating {
-		return
-	}
-	for _, t := range adapter.Titles {
-		if t.Name == name {
-			// Switching games restarts the adapter, which can take a moment
-			// to release its ports; keep that off the UI thread.
-			go func() {
-				p.ctrl.Select(t.ID)
-				p.do(p.Refresh)
-			}()
-			return
-		}
-	}
+func (p *Panel) onSelect(game string) {
+	// Switching games restarts the adapter, which can take a moment to
+	// release its ports; keep that off the UI thread.
+	go func() {
+		p.ctrl.Select(game)
+		p.do(p.Refresh)
+	}()
 }
 
 func (p *Panel) onPower(on bool) {
