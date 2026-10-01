@@ -28,6 +28,7 @@ type window struct {
 	relay   *relayServer
 	bind    string
 	gsiURL  string
+	rlPort  int
 	dark    bool
 	onTheme func(dark bool)
 	onPort  func(port int) error
@@ -46,6 +47,7 @@ func runWindow(ctx context.Context, w window) {
 		Bind:   w.bind,
 		Port:   w.relay.Port(),
 		GSIURL: w.gsiURL,
+		RLPort: w.rlPort,
 		Dark:   w.dark,
 	})
 	p.OnTheme = w.onTheme

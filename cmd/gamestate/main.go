@@ -30,7 +30,7 @@ const usage = `Single Studio - GameState
 Usage:
   gamestate [flags]  run GameState and open its window
 
-Games: apex, sc2, lol, cs2, dota2, war3
+Games: apex, cs2, dota2, lol, rl, sc2, war3
 
 Flags:
 `
@@ -87,6 +87,7 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs.DurationVar((*time.Duration)(&cfg.Interval), "interval", time.Duration(cfg.Interval), "poll interval (sc2, lol)")
 	fs.IntVar(&cfg.GSIPort, "gsi-port", cfg.GSIPort, "GSI receiver port (cs2, dota2)")
 	fs.IntVar(&cfg.ApexPort, "apex-port", cfg.ApexPort, "LiveAPI WebSocket server port (apex)")
+	fs.IntVar(&cfg.RLPort, "rl-port", cfg.RLPort, "Stats API port the game serves (rl)")
 	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
 	err := fs.Parse(args)
 	return *path, *noWindow, err
@@ -129,6 +130,7 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		Interval: time.Duration(cfg.Interval),
 		GSIPort:  cfg.GSIPort,
 		ApexPort: cfg.ApexPort,
+		RLPort:   cfg.RLPort,
 		SC2URL:   cfg.SC2URL,
 	}, hub, log)
 
@@ -196,12 +198,13 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 			relay:  rs,
 			bind:   cfg.Bind,
 			gsiURL: "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/",
+			rlPort: cfg.RLPort,
 			dark:   state.Theme != "light",
 			onTheme: func(dark bool) {
 				remember(func(s *config.State) { s.Theme = map[bool]string{true: "dark", false: "light"}[dark] })
 			},
 			onPort: func(port int) error {
-				if port == cfg.GSIPort || port == cfg.ApexPort {
+				if port == cfg.GSIPort || port == cfg.ApexPort || port == cfg.RLPort {
 					err := fmt.Errorf("port %d is used for receiving game state", port)
 					log.Error("can't move the broadcast port", "err", err)
 					return err

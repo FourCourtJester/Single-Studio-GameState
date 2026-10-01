@@ -27,6 +27,7 @@ func TestValidate(t *testing.T) {
 		"bad bind":       func(c *Config) { c.Bind = "localhost" },
 		"port range":     func(c *Config) { c.Port = 70000 },
 		"port collision": func(c *Config) { c.GSIPort = c.Port },
+		"rl collision":   func(c *Config) { c.RLPort = c.Port },
 		"fast interval":  func(c *Config) { c.Interval = Duration(10 * time.Millisecond) },
 	}
 	for name, mutate := range bad {

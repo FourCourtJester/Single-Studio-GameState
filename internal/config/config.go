@@ -19,6 +19,7 @@ const (
 	DefaultPort     = 47600 // relay WebSocket the browser connects to
 	DefaultGSIPort  = 47601 // CS2 / Dota 2 GSI receiver
 	DefaultApexPort = 7777  // Apex LiveAPI server (the port LiveAPI docs use)
+	DefaultRLPort   = 49123 // Rocket League Stats API (the game's own default)
 )
 
 // MinInterval caps polling at 20 Hz.
@@ -32,6 +33,7 @@ type Config struct {
 	Interval       Duration `json:"interval"`
 	GSIPort        int      `json:"gsiPort"`
 	ApexPort       int      `json:"apexPort"`
+	RLPort         int      `json:"rlPort"`
 	SC2URL         string   `json:"sc2Url"`
 	AllowedOrigins []string `json:"allowedOrigins"`
 }
@@ -45,6 +47,7 @@ func Default() Config {
 		Interval:       Duration(time.Second),
 		GSIPort:        DefaultGSIPort,
 		ApexPort:       DefaultApexPort,
+		RLPort:         DefaultRLPort,
 		SC2URL:         "http://127.0.0.1:6119",
 		AllowedOrigins: []string{"*"},
 	}
@@ -71,13 +74,13 @@ func (c Config) Validate() error {
 	if net.ParseIP(c.Bind) == nil {
 		return fmt.Errorf("bind %q is not an IP address", c.Bind)
 	}
-	ports := map[string]int{"port": c.Port, "gsiPort": c.GSIPort, "apexPort": c.ApexPort}
+	ports := map[string]int{"port": c.Port, "gsiPort": c.GSIPort, "apexPort": c.ApexPort, "rlPort": c.RLPort}
 	for name, p := range ports {
 		if p < 1 || p > 65535 {
 			return fmt.Errorf("%s %d out of range", name, p)
 		}
 	}
-	if c.Port == c.GSIPort || c.Port == c.ApexPort {
+	if c.Port == c.GSIPort || c.Port == c.ApexPort || c.Port == c.RLPort {
 		return fmt.Errorf("relay port %d collides with an adapter port", c.Port)
 	}
 	if time.Duration(c.Interval) < MinInterval {

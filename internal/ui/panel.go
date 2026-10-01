@@ -35,20 +35,31 @@ const (
 	resizeSettle = 300 * time.Millisecond
 )
 
-// gsiGuide is Valve's Game State Integration guide. It was written for
-// CS:GO, but CS2 and Dota 2 set up their GSI files the same way.
-var gsiGuide, _ = url.Parse("https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration")
+// Setup guides for games whose feed the user has to switch on themselves.
+// Valve's GSI guide was written for CS:GO, but CS2 and Dota 2 set up their
+// GSI files the same way.
+var (
+	gsiGuide, _ = url.Parse("https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration")
+	rlGuide, _  = url.Parse("https://www.rocketleague.com/en/developer/stats-api")
+)
+
+// help is the setup hint shown under the game picker for one game.
+type help struct {
+	text string
+	link string
+	url  *url.URL
+}
 
 // Panel is GameState's window content.
 type Panel struct {
-	ctrl   *control.Controller
-	errs   *control.ErrorLog
-	hub    *relay.Hub
-	bind   string
-	port   int // broadcast port being served; 0 when none
-	gsiURL string
-	app    fyne.App
-	win    fyne.Window
+	ctrl *control.Controller
+	errs *control.ErrorLog
+	hub  *relay.Hub
+	bind string
+	port int // broadcast port being served; 0 when none
+	help map[string]help
+	app  fyne.App
+	win  fyne.Window
 
 	// OnTheme is called when the user switches theme, so it can be remembered.
 	OnTheme func(dark bool)
@@ -70,7 +81,9 @@ type Panel struct {
 	meta       *widget.Label
 	portEntry  *widget.Entry
 	portApply  *widget.Button
-	gsiHelp    *fyne.Container
+	helpBox    *fyne.Container
+	helpText   *widget.Label
+	helpLink   *widget.Hyperlink
 	themeBtn   *widget.Button
 	errPane    *fyne.Container
 	errBG      *canvas.Rectangle
@@ -90,15 +103,25 @@ type Options struct {
 	Bind   string // address the broadcast port is on
 	Port   int    // broadcast port Single Studio connects to; 0 if it couldn't open
 	GSIURL string // where CS2 and Dota 2 should send game state
+	RLPort int    // where Rocket League's Stats API is read from
 	Dark   bool
 }
 
 // NewPanel builds the window content and sets it on win.
 func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, o Options) *Panel {
-	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, bind: o.Bind, port: o.Port, gsiURL: o.GSIURL, app: a, win: win, dark: o.Dark, do: fyne.Do}
+	gsi := help{"Your Game State Integration file should send to " + o.GSIURL, "Setup guide (Valve)", gsiGuide}
+	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, bind: o.Bind, port: o.Port, app: a, win: win, dark: o.Dark, do: fyne.Do,
+		help: map[string]help{
+			adapter.CS2:   gsi,
+			adapter.Dota2: gsi,
+			adapter.RL: {
+				fmt.Sprintf("Turn on Rocket League's Stats API (PacketSendRate in DefaultStatsAPI.ini); it's read from port %d", o.RLPort),
+				"Stats API guide (Psyonix)", rlGuide,
+			},
+		},
+	}
 	// Set the theme before building widgets so their first frame uses it.
 	a.Settings().SetTheme(newTheme(o.Dark))
-	gsiURL := o.GSIURL
 
 	title := widget.NewLabelWithStyle(Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.themeBtn = widget.NewButtonWithIcon("", nil, p.toggleTheme)
@@ -115,16 +138,17 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	p.game = widget.NewSelect(names, p.onSelect)
 	p.game.PlaceHolder = "Choose a game…"
 
-	// CS2 and Dota 2 only send to addresses in the user's own GSI file, so
-	// say what address that is and where to learn how to write the file.
-	gsiText := widget.NewLabel("Your Game State Integration file should send to " + gsiURL)
-	gsiText.Wrapping = fyne.TextWrapWord
-	gsiText.SizeName = theme.SizeNameCaptionText
-	gsiText.Importance = widget.LowImportance
-	gsiLink := widget.NewHyperlink("Setup guide (Valve)", gsiGuide)
-	gsiLink.SizeName = theme.SizeNameCaptionText
-	p.gsiHelp = container.NewVBox(gsiText, gsiLink)
-	p.gsiHelp.Hide()
+	// Some games only send data once the user has set them up (a GSI file,
+	// an ini setting). That setup is theirs to do; say what SSG expects and
+	// link to the game's own guide.
+	p.helpText = widget.NewLabel("")
+	p.helpText.Wrapping = fyne.TextWrapWord
+	p.helpText.SizeName = theme.SizeNameCaptionText
+	p.helpText.Importance = widget.LowImportance
+	p.helpLink = widget.NewHyperlink("", nil)
+	p.helpLink.SizeName = theme.SizeNameCaptionText
+	p.helpBox = container.NewVBox(p.helpText, p.helpLink)
+	p.helpBox.Hide()
 
 	p.powerLabel = widget.NewLabelWithStyle("Off", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.status = widget.NewLabel("Not relaying")
@@ -167,7 +191,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	win.SetContent(container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, p.themeBtn, title),
 		container.NewVBox(gameCaption, p.game),
-		p.gsiHelp,
+		p.helpBox,
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
 		container.NewBorder(nil, nil, portLabel, p.portApply, p.portEntry),
 		p.meta,
@@ -270,10 +294,13 @@ func (p *Panel) Refresh() {
 		p.game.ClearSelected()
 	}
 	p.updating = false
-	if st.Game == adapter.CS2 || st.Game == adapter.Dota2 {
-		p.gsiHelp.Show()
+	if h, ok := p.help[st.Game]; ok {
+		p.helpText.SetText(h.text)
+		p.helpLink.SetText(h.link)
+		p.helpLink.SetURL(h.url)
+		p.helpBox.Show()
 	} else {
-		p.gsiHelp.Hide()
+		p.helpBox.Hide()
 	}
 	broadcasting := p.port != 0
 	if broadcasting {

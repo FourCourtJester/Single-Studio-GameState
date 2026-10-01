@@ -29,6 +29,7 @@ const (
 	LoL   = "lol"
 	CS2   = "cs2"
 	Dota2 = "dota2"
+	RL    = "rl"
 	War3  = "war3"
 )
 
@@ -45,6 +46,7 @@ var Titles = []Title{
 	{CS2, "Counter-Strike 2", true},
 	{Dota2, "Dota 2", true},
 	{LoL, "League of Legends", true},
+	{RL, "Rocket League", true},
 	{SC2, "StarCraft II", true},
 	{War3, "Warcraft III", false},
 }
@@ -69,6 +71,7 @@ type Options struct {
 	Interval time.Duration // poll interval for poll adapters
 	GSIPort  int           // CS2 / Dota 2 Game State Integration receiver
 	ApexPort int           // Apex LiveAPI WebSocket server
+	RLPort   int           // Rocket League Stats API socket the game serves
 	SC2URL   string        // StarCraft II client API base URL
 	Log      *slog.Logger
 }
@@ -107,6 +110,13 @@ func New(game string, o Options) (Adapter, error) {
 		return &WSServer{
 			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(o.ApexPort)),
 			Log:  log,
+		}, nil
+	case RL:
+		// The game serves the socket on this machine; bind doesn't apply.
+		return &TCPStream{
+			Addr:  net.JoinHostPort("127.0.0.1", strconv.Itoa(o.RLPort)),
+			Log:   log,
+			Retry: 2 * time.Second,
 		}, nil
 	case War3:
 		// Observer data is known to exist, but its transport is unverified.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,5 +190,59 @@ func TestWSServerRelaysGameMessages(t *testing.T) {
 	conn.Write(ctx, websocket.MessageBinary, []byte{0x0a, 0x01})
 	if got := c.wait(t); !bytes.Equal(got, []byte{0x0a, 0x01}) {
 		t.Fatalf("binary: got %x", got)
+	}
+}
+
+func TestTCPStreamSplitsAndReconnects(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	s := &TCPStream{Addr: ln.Addr().String(), Log: quiet, Retry: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := newCollector()
+	done := make(chan error)
+	go func() { done <- s.Run(ctx, c.emit) }()
+
+	// First connection: one message split across writes, then two in one
+	// write with no delimiter, as Rocket League sends them.
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := `{"Event":"UpdateState","Data":"{\"MatchGuid\":\"a}b\"}"}`
+	conn.Write([]byte(first[:20]))
+	time.Sleep(20 * time.Millisecond)
+	conn.Write([]byte(first[20:] + `{"Event":"BallHit","Data":"{}"}{"Event":"GoalScored","Data":"{}"}`))
+	want := []string{first, `{"Event":"BallHit","Data":"{}"}`, `{"Event":"GoalScored","Data":"{}"}`}
+	for range want {
+		c.wait(t)
+	}
+	c.mu.Lock()
+	for i, w := range want {
+		if string(c.got[i]) != w {
+			t.Errorf("message %d: got %s, want %s", i, c.got[i], w)
+		}
+	}
+	c.mu.Unlock()
+
+	// The game restarts: the adapter reconnects and keeps relaying.
+	conn.Close()
+	conn, err = ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.Write([]byte(`{"Event":"MatchCreated","Data":"{}"}`))
+	if got := c.wait(t); string(got) != `{"Event":"MatchCreated","Data":"{}"}` {
+		t.Fatalf("after reconnect: got %s", got)
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned %v after cancel, want nil", err)
 	}
 }

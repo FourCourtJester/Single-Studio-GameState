@@ -50,6 +50,7 @@ func newFixture(t *testing.T) fixture {
 		Bind:   "127.0.0.1",
 		Port:   47600,
 		GSIURL: "http://127.0.0.1:47601/",
+		RLPort: 49123,
 		Dark:   true,
 	})
 	queue := make(chan func(), 100)
@@ -155,16 +156,25 @@ func TestUserResizedWindowIsLeftAlone(t *testing.T) {
 	}
 }
 
-func TestGSIHelpOnlyForGSIGames(t *testing.T) {
+func TestSetupHelpPerGame(t *testing.T) {
 	f := newFixture(t)
 	for _, c := range []struct {
 		game string
-		show bool
-	}{{adapter.CS2, true}, {adapter.SC2, false}, {adapter.Dota2, true}, {adapter.Apex, false}} {
+		want string // "" means no help shown
+	}{
+		{adapter.CS2, "http://127.0.0.1:47601/"},
+		{adapter.SC2, ""},
+		{adapter.Dota2, "http://127.0.0.1:47601/"},
+		{adapter.RL, "port 49123"},
+		{adapter.Apex, ""},
+	} {
 		f.ctrl.Select(c.game)
 		f.panel.Refresh()
-		if f.panel.gsiHelp.Visible() != c.show {
-			t.Errorf("%s: help visible = %v, want %v", c.game, f.panel.gsiHelp.Visible(), c.show)
+		if shown := f.panel.helpBox.Visible(); shown != (c.want != "") {
+			t.Errorf("%s: help visible = %v", c.game, shown)
+		}
+		if c.want != "" && !strings.Contains(f.panel.helpText.Text, c.want) {
+			t.Errorf("%s: help = %q, want it to mention %q", c.game, f.panel.helpText.Text, c.want)
 		}
 	}
 }
@@ -293,4 +303,6 @@ func TestScreenshots(t *testing.T) {
 	f.panel.Refresh() // let the window shrink back, then capture
 	time.Sleep(resizeSettle + 50*time.Millisecond)
 	shot("5-dota")
+	f.ctrl.Select(adapter.RL)
+	shot("6-rl")
 }

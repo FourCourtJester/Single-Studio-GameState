@@ -17,6 +17,7 @@ for the titles below.
 | League of Legends | `lol`     | Polls live client data on https://127.0.0.1:2999        | Implemented     |
 | Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                   | Implemented     |
 | Dota 2            | `dota2`   | Receives Game State Integration POSTs                   | Implemented     |
+| Rocket League     | `rl`      | Reads the Stats API socket on localhost:49123           | Implemented     |
 | Warcraft III      | `war3`    | Transport still to be confirmed                         | Not implemented |
 
 ## Download
@@ -81,6 +82,13 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
   JSON payloads are relayed as-is. Protobuf payloads are relayed base64-encoded.
+- **Rocket League:** turn on the game's
+  [Stats API](https://www.rocketleague.com/en/developer/stats-api) by setting
+  `PacketSendRate` in `DefaultStatsAPI.ini` (that file is yours to manage).
+  GameState connects to its socket on port 49123 and relays each event
+  (`{"Event": ..., "Data": ...}`) exactly as the game sends it. Rocket League
+  can also be read from a browser directly; it's here so every title works
+  the same way.
 - **StarCraft II and League:** no setup. Start a game or replay and
   GameState picks it up.
 
@@ -94,6 +102,7 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
 | `-gsi-port`  | `gsiPort`        | `47601`                 | cs2, dota2 |
 | `-apex-port` | `apexPort`       | `7777`                  | apex       |
+| `-rl-port`   | `rlPort`         | `49123`                 | rl         |
 | `-sc2-url`   | `sc2Url`         | `http://127.0.0.1:6119` | sc2        |
 | (none)       | `allowedOrigins` | `["*"]`                 | relay      |
 
