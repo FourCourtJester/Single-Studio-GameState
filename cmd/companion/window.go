@@ -38,7 +38,7 @@ type window struct {
 func runWindow(ctx context.Context, w window) {
 	a := app.NewWithID(appID)
 	a.SetIcon(fyne.NewStaticResource("Icon.png", iconPNG))
-	win := a.NewWindow("Single Studio Companion")
+	win := a.NewWindow(ui.Title)
 	win.SetMaster()
 
 	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, w.relayURL, w.dark)

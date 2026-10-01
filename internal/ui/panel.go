@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	// Title heads the window and its title bar.
+	Title = "Single Studio: GameState"
 	// Width is the window's starting width.
 	Width = 400
 	// maxShownErrors caps the pane; repeats already fold into one line.
@@ -71,7 +73,7 @@ type Panel struct {
 func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, relayURL string, dark bool) *Panel {
 	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, relayURL: relayURL, app: a, win: win, dark: dark, do: fyne.Do}
 
-	title := widget.NewLabelWithStyle("Single Studio Companion", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	title := widget.NewLabelWithStyle(Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.themeBtn = widget.NewButtonWithIcon("", nil, p.toggleTheme)
 	p.themeBtn.Importance = widget.LowImportance
 

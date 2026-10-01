@@ -42,7 +42,7 @@ func newFixture(t *testing.T) fixture {
 
 	ctrl := control.New(adapter.Options{Bind: "127.0.0.1", Interval: time.Hour, GSIPort: port, SC2URL: "http://127.0.0.1:1"}, hub, log)
 	t.Cleanup(ctrl.Stop)
-	win := a.NewWindow("Single Studio Companion")
+	win := a.NewWindow(Title)
 	p := NewPanel(a, win, ctrl, errs, hub, "ws://127.0.0.1:47600/ws", true)
 	queue := make(chan func(), 100)
 	p.do = func(fn func()) { queue <- fn }
