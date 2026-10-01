@@ -31,6 +31,9 @@ Double-click the companion. It opens its control panel in your browser:
 - **Errors:** appears only when something goes wrong (a port already in use,
   a rejected GSI token) and disappears when cleared.
 
+The panel is dark by default; the button in its corner switches to light, and
+the choice is remembered.
+
 Closing the browser tab leaves the companion running; launching it again
 reopens the panel. Close the companion's console window to quit.
 
