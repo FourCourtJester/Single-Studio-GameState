@@ -10,15 +10,18 @@ for the titles below.
 
 ## Supported titles
 
-| Title             | Namespace | How GameState gets the data                        | Status          |
-| ----------------- | --------- | ------------------------------------------------------ | --------------- |
-| Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | Implemented     |
-| StarCraft II      | `sc2`     | Polls the client API `/game` and `/ui` on localhost:6119 | Implemented     |
-| League of Legends | `lol`     | Polls live client data on https://127.0.0.1:2999        | Implemented     |
-| Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                   | Implemented     |
-| Dota 2            | `dota2`   | Receives Game State Integration POSTs                   | Implemented     |
-| Rocket League     | `rl`      | Reads the Stats API socket on localhost:49123           | Implemented     |
-| Warcraft III      | `war3`    | Transport still to be confirmed                         | Not implemented |
+| Title             | Namespace | How GameState gets the data                          | Default port | Status          |
+| ----------------- | --------- | ---------------------------------------------------- | ------------ | --------------- |
+| Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | 7777      | Implemented     |
+| Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                | 47601        | Implemented     |
+| Dota 2            | `dota2`   | Receives Game State Integration POSTs                | 47601        | Implemented     |
+| League of Legends | `lol`     | Polls live client data on https://127.0.0.1:2999     | fixed (2999) | Implemented     |
+| Rocket League     | `rl`      | Connects to the Stats API WebSocket the game serves  | 49124        | Implemented     |
+| StarCraft II      | `sc2`     | Polls the client API `/game` and `/ui`               | 6119         | Implemented     |
+| Warcraft III      | `war3`    | Transport still to be confirmed                      |              | Not implemented |
+
+Every port except League's can be changed in the window to match your own
+setup.
 
 ## Download
 
@@ -43,6 +46,11 @@ Opening GameState shows its window:
 ![GameState window](docs/panel.png)
 
 - **Game:** pick the title you're streaming. The choice is remembered.
+- **Game port:** for games whose port can change, the port GameState uses
+  to reach that game, prefilled with its default. If you've changed the
+  port in the game's own setup, enter the same one and press Apply. Each
+  game remembers its own port; changing it while that game is on reconnects
+  straight away.
 - **On/off:** start or stop relaying. Switching games while on swaps over
   straight away; the old game's data stays in Single Studio.
 - **Broadcast port:** the port Single Studio connects to (47600 by default).
@@ -73,11 +81,16 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 
 ### Per-game setup
 
+The ports below are the defaults; use whatever your setup uses and set the
+same port in the window's **Game port** box. The window shows the address
+to use for the selected game, with a link to that game's own guide.
+
 - **CS2 / Dota 2:** the game only sends its state to the addresses listed in
   your Game State Integration config file. Creating and managing that file
-  is up to you; GameState only needs its `uri` to be
-  `http://127.0.0.1:47601/`. Payloads are relayed exactly as the game sends
-  them. Valve's [Game State Integration guide](https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration)
+  is up to you; its `uri` must point at GameState
+  (`http://127.0.0.1:47601/` by default). Payloads are relayed exactly as the
+  game sends them. Valve's
+  [Game State Integration guide](https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration)
   covers the file for both games.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
@@ -85,12 +98,13 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 - **Rocket League:** turn on the game's
   [Stats API](https://www.rocketleague.com/en/developer/stats-api) by setting
   `PacketSendRate` in `DefaultStatsAPI.ini` (that file is yours to manage).
-  GameState connects to its socket on port 49123 and relays each event
-  (`{"Event": ..., "Data": ...}`) exactly as the game sends it. Rocket League
-  can also be read from a browser directly; it's here so every title works
-  the same way.
-- **StarCraft II and League:** no setup. Start a game or replay and
-  GameState picks it up.
+  GameState connects to its WebSocket (`WebPort`, 49124 by default) and
+  relays each event (`{"Event": ..., "Data": ...}`) exactly as the game sends
+  it; `Data` is a JSON-encoded string. Rocket League can also be read from a
+  browser directly; it's here so every title works the same way.
+- **StarCraft II:** no setup. GameState polls the client API on port 6119;
+  if you start the game with `-clientapi` on another port, match it.
+- **League:** no setup. Start a game or replay and GameState picks it up.
 
 ### Settings
 
@@ -100,10 +114,7 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 | `-bind`      | `bind`           | `127.0.0.1`             | all        |
 | `-port`      | `port`           | `47600` (or the port set in the window) | relay |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
-| `-gsi-port`  | `gsiPort`        | `47601`                 | cs2, dota2 |
-| `-apex-port` | `apexPort`       | `7777`                  | apex       |
-| `-rl-port`   | `rlPort`         | `49123`                 | rl         |
-| `-sc2-url`   | `sc2Url`         | `http://127.0.0.1:6119` | sc2        |
+| `-game-port` | `gamePorts`      | each title's default, or the port set in the window | the `-game` game; `gamePorts` maps namespace to port, e.g. `{"rl": 49125}` |
 | (none)       | `allowedOrigins` | `["*"]`                 | relay      |
 
 Every listener binds to 127.0.0.1 by default, so nothing is reachable from

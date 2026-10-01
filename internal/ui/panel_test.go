@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"image/png"
 	"io"
 	"log/slog"
@@ -43,15 +44,15 @@ func newFixture(t *testing.T) fixture {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
-	ctrl := control.New(adapter.Options{Bind: "127.0.0.1", Interval: time.Hour, GSIPort: port, SC2URL: "http://127.0.0.1:1"}, hub, log)
+	ctrl := control.New(adapter.Options{Bind: "127.0.0.1", Interval: time.Hour}, hub, log)
 	t.Cleanup(ctrl.Stop)
+	ctrl.SetPort(adapter.CS2, port)
+	ctrl.SetPort(adapter.SC2, 1) // nothing answers there; SC2 just waits
 	win := a.NewWindow(Title)
 	p := NewPanel(a, win, ctrl, errs, hub, Options{
-		Bind:   "127.0.0.1",
-		Port:   47600,
-		GSIURL: "http://127.0.0.1:47601/",
-		RLPort: 49123,
-		Dark:   true,
+		Bind: "127.0.0.1",
+		Port: 47600,
+		Dark: true,
 	})
 	queue := make(chan func(), 100)
 	p.do = func(fn func()) { queue <- fn }
@@ -162,11 +163,11 @@ func TestSetupHelpPerGame(t *testing.T) {
 		game string
 		want string // "" means no help shown
 	}{
-		{adapter.CS2, "http://127.0.0.1:47601/"},
-		{adapter.SC2, ""},
 		{adapter.Dota2, "http://127.0.0.1:47601/"},
-		{adapter.RL, "port 49123"},
-		{adapter.Apex, ""},
+		{adapter.SC2, "port 1"},
+		{adapter.RL, "port 49124"},
+		{adapter.Apex, "ws://127.0.0.1:7777"},
+		{adapter.LoL, ""},
 	} {
 		f.ctrl.Select(c.game)
 		f.panel.Refresh()
@@ -201,33 +202,75 @@ func TestPortApply(t *testing.T) {
 	}
 
 	for _, bad := range []string{"", "abc", "0", "70000", "47600"} {
-		f.panel.portEntry.SetText(bad)
-		if !f.panel.portApply.Disabled() {
+		f.panel.bcast.entry.SetText(bad)
+		if !f.panel.bcast.apply.Disabled() {
 			t.Errorf("Apply enabled for %q", bad)
 		}
 	}
 
-	f.panel.portEntry.SetText("48000")
-	if f.panel.portApply.Disabled() {
+	f.panel.bcast.entry.SetText("48000")
+	if f.panel.bcast.apply.Disabled() {
 		t.Fatal("Apply disabled for a valid new port")
 	}
-	test.Tap(f.panel.portApply)
+	test.Tap(f.panel.bcast.apply)
 	eventually(t, f, func() bool { return f.panel.port == 48000 })
 	if !strings.Contains(f.panel.meta.Text, "ws://127.0.0.1:48000/ws") {
 		t.Fatalf("meta = %q", f.panel.meta.Text)
 	}
-	if !f.panel.portApply.Disabled() {
+	if !f.panel.bcast.apply.Disabled() {
 		t.Fatal("Apply should be disabled once the port is applied")
 	}
 
 	mu.Lock()
 	fail = true
 	mu.Unlock()
-	f.panel.portEntry.SetText("49000")
-	test.Tap(f.panel.portApply)
-	eventually(t, f, func() bool { return calls() == 2 && f.panel.portEntry.Text == "48000" })
+	f.panel.bcast.entry.SetText("49000")
+	test.Tap(f.panel.bcast.apply)
+	eventually(t, f, func() bool { return calls() == 2 && f.panel.bcast.entry.Text == "48000" })
 	if f.panel.port != 48000 {
 		t.Fatalf("port = %d after a failed move, want 48000", f.panel.port)
+	}
+}
+
+func TestGamePortBox(t *testing.T) {
+	f := newFixture(t)
+	var mu sync.Mutex
+	var got []string
+	f.panel.OnGamePort = func(game string, port int) error {
+		mu.Lock()
+		got = append(got, fmt.Sprintf("%s=%d", game, port))
+		mu.Unlock()
+		return f.ctrl.SetPort(game, port)
+	}
+
+	f.ctrl.Select(adapter.LoL)
+	f.panel.Refresh()
+	if f.panel.gamePort.row.Visible() {
+		t.Fatal("League's port is fixed; no box expected")
+	}
+
+	f.ctrl.Select(adapter.RL)
+	f.panel.Refresh()
+	if !f.panel.gamePort.row.Visible() || f.panel.gamePort.entry.Text != "49124" {
+		t.Fatalf("rl box: visible=%v text=%q", f.panel.gamePort.row.Visible(), f.panel.gamePort.entry.Text)
+	}
+	f.panel.gamePort.entry.SetText("50124")
+	test.Tap(f.panel.gamePort.apply)
+	eventually(t, f, func() bool { return f.ctrl.Port(adapter.RL) == 50124 })
+	if !strings.Contains(f.panel.helpText.Text, "port 50124") {
+		t.Fatalf("help not updated: %q", f.panel.helpText.Text)
+	}
+
+	// Switching games shows that game's own port.
+	f.ctrl.Select(adapter.Apex)
+	f.panel.Refresh()
+	if f.panel.gamePort.entry.Text != "7777" {
+		t.Fatalf("apex box shows %q", f.panel.gamePort.entry.Text)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "rl=50124" {
+		t.Fatalf("OnGamePort calls: %v", got)
 	}
 }
 
@@ -238,7 +281,7 @@ func TestNoPortDisablesGameControls(t *testing.T) {
 	if !f.panel.game.Disabled() || !f.panel.power.Disabled() {
 		t.Fatal("game controls should be inert without a broadcast port")
 	}
-	if f.panel.portEntry.Disabled() {
+	if f.panel.bcast.entry.Disabled() {
 		t.Fatal("the port box must stay usable to fix it")
 	}
 	f.panel.SetPort(48000)

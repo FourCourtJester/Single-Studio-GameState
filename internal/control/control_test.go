@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,9 @@ func TestStartNeedsAGame(t *testing.T) {
 }
 
 func TestStartStopAndSwitch(t *testing.T) {
-	c, _ := setup(t, adapter.Options{GSIPort: freePort(t), SC2URL: "http://127.0.0.1:1"})
+	c, _ := setup(t, adapter.Options{})
+	c.SetPort(adapter.CS2, freePort(t))
+	c.SetPort(adapter.SC2, 1) // nothing answers there; SC2 just waits
 	var remembered string
 	c.OnSelect = func(g string) { remembered = g }
 
@@ -89,7 +92,8 @@ func TestStartStopAndSwitch(t *testing.T) {
 }
 
 func TestStopReleasesPorts(t *testing.T) {
-	c, _ := setup(t, adapter.Options{GSIPort: freePort(t)})
+	c, _ := setup(t, adapter.Options{})
+	c.SetPort(adapter.CS2, freePort(t))
 	c.Select(adapter.CS2)
 	for range 3 {
 		if err := c.Start(); err != nil {
@@ -111,7 +115,8 @@ func TestAdapterFailureTurnsOffAndReports(t *testing.T) {
 	}
 	defer busy.Close()
 
-	c, errs := setup(t, adapter.Options{GSIPort: busy.Addr().(*net.TCPAddr).Port})
+	c, errs := setup(t, adapter.Options{})
+	c.SetPort(adapter.Dota2, busy.Addr().(*net.TCPAddr).Port)
 	c.Select(adapter.Dota2)
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
@@ -166,4 +171,55 @@ func TestCaptureHandlerFormats(t *testing.T) {
 	if len(got) != 1 || got[0].Message != "websocket accept failed: EOF (origin=https://x)" {
 		t.Fatalf("got %+v", got)
 	}
+}
+
+func TestSetPortRestartsRunningGame(t *testing.T) {
+	c, _ := setup(t, adapter.Options{})
+	first, second := freePort(t), freePort(t)
+	if err := c.SetPort(adapter.CS2, first); err != nil {
+		t.Fatal(err)
+	}
+	c.Select(adapter.CS2)
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitListening(t, first)
+
+	if err := c.SetPort(adapter.CS2, second); err != nil {
+		t.Fatal(err)
+	}
+	waitListening(t, second)
+	if c.Port(adapter.CS2) != second || !c.State().Running {
+		t.Fatalf("port=%d running=%v", c.Port(adapter.CS2), c.State().Running)
+	}
+	// Another game's port doesn't touch the running one.
+	if err := c.SetPort(adapter.Apex, 9999); err != nil || c.Port(adapter.Apex) != 9999 {
+		t.Fatalf("apex: %v %d", err, c.Port(adapter.Apex))
+	}
+}
+
+func TestSetPortRules(t *testing.T) {
+	c, _ := setup(t, adapter.Options{})
+	if err := c.SetPort(adapter.LoL, 3000); err == nil {
+		t.Error("League's port is fixed; expected an error")
+	}
+	if err := c.SetPort(adapter.RL, 0); err == nil {
+		t.Error("expected an out-of-range error")
+	}
+	c.SetPort(adapter.RL, 50000)
+	c.SetPort(adapter.RL, 49124) // back to the default clears the override
+	if _, ok := c.Ports()[adapter.RL]; ok || c.Port(adapter.RL) != 49124 {
+		t.Fatalf("overrides %v", c.Ports())
+	}
+}
+
+func waitListening(t *testing.T, port int) {
+	t.Helper()
+	waitFor(t, func() bool {
+		conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			conn.Close()
+		}
+		return err == nil
+	})
 }

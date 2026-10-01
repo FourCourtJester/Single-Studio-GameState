@@ -27,12 +27,12 @@ type window struct {
 	log     *slog.Logger
 	relay   *relayServer
 	bind    string
-	gsiURL  string
-	rlPort  int
 	dark    bool
 	onTheme func(dark bool)
 	onPort  func(port int) error
-	show    *atomic.Pointer[func()]
+
+	onGamePort func(game string, port int) error
+	show       *atomic.Pointer[func()]
 }
 
 // runWindow shows GameState's window and blocks until it is closed or
@@ -44,14 +44,13 @@ func runWindow(ctx context.Context, w window) {
 	win.SetMaster()
 
 	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, ui.Options{
-		Bind:   w.bind,
-		Port:   w.relay.Port(),
-		GSIURL: w.gsiURL,
-		RLPort: w.rlPort,
-		Dark:   w.dark,
+		Bind: w.bind,
+		Port: w.relay.Port(),
+		Dark: w.dark,
 	})
 	p.OnTheme = w.onTheme
 	p.OnPort = w.onPort
+	p.OnGamePort = w.onGamePort
 	raise := func() {
 		fyne.Do(func() {
 			win.Show()

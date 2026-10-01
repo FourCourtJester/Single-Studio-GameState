@@ -13,14 +13,10 @@ import (
 	"github.com/fourcourtjester/single-studio-gamestate/internal/adapter"
 )
 
-// Default ports. Provisional until the handoff's port question is settled;
-// the relay port must match the Single Studio plugin's default.
-const (
-	DefaultPort     = 47600 // relay WebSocket the browser connects to
-	DefaultGSIPort  = 47601 // CS2 / Dota 2 GSI receiver
-	DefaultApexPort = 7777  // Apex LiveAPI server (the port LiveAPI docs use)
-	DefaultRLPort   = 49123 // Rocket League Stats API (the game's own default)
-)
+// DefaultPort is the broadcast port Single Studio connects to. Provisional
+// until the handoff's port question is settled; it must match the Single
+// Studio plugin's default. Each game's default port lives on its title.
+const DefaultPort = 47600
 
 // MinInterval caps polling at 20 Hz.
 const MinInterval = 50 * time.Millisecond
@@ -31,11 +27,9 @@ type Config struct {
 	Bind           string   `json:"bind"`
 	Port           int      `json:"port"`
 	Interval       Duration `json:"interval"`
-	GSIPort        int      `json:"gsiPort"`
-	ApexPort       int      `json:"apexPort"`
-	RLPort         int      `json:"rlPort"`
-	SC2URL         string   `json:"sc2Url"`
 	AllowedOrigins []string `json:"allowedOrigins"`
+	// GamePorts overrides a game's default port, keyed by namespace.
+	GamePorts map[string]int `json:"gamePorts,omitempty"`
 }
 
 // Default returns the default configuration. Everything binds to
@@ -45,10 +39,6 @@ func Default() Config {
 		Bind:           "127.0.0.1",
 		Port:           DefaultPort,
 		Interval:       Duration(time.Second),
-		GSIPort:        DefaultGSIPort,
-		ApexPort:       DefaultApexPort,
-		RLPort:         DefaultRLPort,
-		SC2URL:         "http://127.0.0.1:6119",
 		AllowedOrigins: []string{"*"},
 	}
 }
@@ -74,19 +64,48 @@ func (c Config) Validate() error {
 	if net.ParseIP(c.Bind) == nil {
 		return fmt.Errorf("bind %q is not an IP address", c.Bind)
 	}
-	ports := map[string]int{"port": c.Port, "gsiPort": c.GSIPort, "apexPort": c.ApexPort, "rlPort": c.RLPort}
-	for name, p := range ports {
-		if p < 1 || p > 65535 {
-			return fmt.Errorf("%s %d out of range", name, p)
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port %d out of range", c.Port)
+	}
+	for game, p := range c.GamePorts {
+		t, ok := adapter.Lookup(game)
+		switch {
+		case !ok:
+			return fmt.Errorf("gamePorts: unknown game %q", game)
+		case t.DefaultPort == 0:
+			return fmt.Errorf("gamePorts: %s's port can't be changed", t.Name)
+		case p < 1 || p > 65535:
+			return fmt.Errorf("gamePorts: %s port %d out of range", game, p)
 		}
 	}
-	if c.Port == c.GSIPort || c.Port == c.ApexPort || c.Port == c.RLPort {
-		return fmt.Errorf("relay port %d collides with an adapter port", c.Port)
+	if game := c.PortUser(c.Port); game != "" {
+		return fmt.Errorf("broadcast port %d is %s's port", c.Port, game)
 	}
 	if time.Duration(c.Interval) < MinInterval {
 		return fmt.Errorf("interval %s is below the %s minimum", time.Duration(c.Interval), MinInterval)
 	}
 	return nil
+}
+
+// GamePort returns the port used for game: its override, else the
+// title's default (0 when the game's port is fixed).
+func (c Config) GamePort(game string) int {
+	if p, ok := c.GamePorts[game]; ok {
+		return p
+	}
+	t, _ := adapter.Lookup(game)
+	return t.DefaultPort
+}
+
+// PortUser returns the name of a game whose port is port, or "". The
+// broadcast port must not be one of them.
+func (c Config) PortUser(port int) string {
+	for _, t := range adapter.Titles {
+		if t.DefaultPort != 0 && c.GamePort(t.ID) == port {
+			return t.Name
+		}
+	}
+	return ""
 }
 
 // Loopback reports whether GameState only listens on this machine.
@@ -120,6 +139,8 @@ type State struct {
 	Game  string `json:"game"`
 	Theme string `json:"theme,omitempty"` // "light" or "dark" (the default)
 	Port  int    `json:"port,omitempty"`  // broadcast port picked in the window
+	// GamePorts are game ports picked in the window, keyed by namespace.
+	GamePorts map[string]int `json:"gamePorts,omitempty"`
 }
 
 // StatePath returns where State is kept in the user's config directory.

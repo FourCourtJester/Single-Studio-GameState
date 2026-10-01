@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type Controller struct {
 	op sync.Mutex // serialises Select, Start and Stop
 
 	mu       sync.Mutex
+	ports    map[string]int // per-game overrides of the title's default port
 	game     string
 	running  bool
 	cancel   context.CancelFunc
@@ -43,7 +45,60 @@ type Controller struct {
 // New returns a stopped Controller that publishes to hub.
 func New(opts adapter.Options, hub *relay.Hub, log *slog.Logger) *Controller {
 	opts.Log = log
-	return &Controller{opts: opts, hub: hub, log: log}
+	return &Controller{opts: opts, hub: hub, log: log, ports: map[string]int{}}
+}
+
+// Port returns the port used for game: the user's override, else the
+// title's default. 0 means the game's port is fixed.
+func (c *Controller) Port(game string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.port(game)
+}
+
+func (c *Controller) port(game string) int {
+	if p, ok := c.ports[game]; ok {
+		return p
+	}
+	t, _ := adapter.Lookup(game)
+	return t.DefaultPort
+}
+
+// Ports returns the per-game overrides, for saving.
+func (c *Controller) Ports() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.ports)
+}
+
+// SetPort changes game's port. If that game is running it restarts on the
+// new port; a port that can't be used is reported like any start failure.
+func (c *Controller) SetPort(game string, port int) error {
+	t, ok := adapter.Lookup(game)
+	switch {
+	case !ok:
+		return fmt.Errorf("unknown game %q", game)
+	case t.DefaultPort == 0:
+		return fmt.Errorf("%s's port can't be changed", t.Name)
+	case port < 1 || port > 65535:
+		return fmt.Errorf("port %d out of range", port)
+	}
+	c.op.Lock()
+	defer c.op.Unlock()
+
+	c.mu.Lock()
+	if port == t.DefaultPort {
+		delete(c.ports, game)
+	} else {
+		c.ports[game] = port
+	}
+	restart := c.running && c.game == game
+	c.mu.Unlock()
+
+	if restart {
+		return c.start()
+	}
+	return nil
 }
 
 // State returns a snapshot for the UI.
@@ -110,7 +165,11 @@ func (c *Controller) start() error {
 		c.log.Warn("can't turn on", "err", err)
 		return err
 	}
-	a, err := adapter.New(game, c.opts)
+	opts := c.opts
+	c.mu.Lock()
+	opts.Port = c.port(game)
+	c.mu.Unlock()
+	a, err := adapter.New(game, opts)
 	if err != nil {
 		c.log.Error(fmt.Sprintf("can't relay %s", title.Name), "err", err)
 		return err

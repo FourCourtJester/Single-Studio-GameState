@@ -23,12 +23,14 @@ func TestDefaultIsValid(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	bad := map[string]func(*Config){
-		"unknown game":   func(c *Config) { c.Game = "valorant" },
-		"bad bind":       func(c *Config) { c.Bind = "localhost" },
-		"port range":     func(c *Config) { c.Port = 70000 },
-		"port collision": func(c *Config) { c.GSIPort = c.Port },
-		"rl collision":   func(c *Config) { c.RLPort = c.Port },
-		"fast interval":  func(c *Config) { c.Interval = Duration(10 * time.Millisecond) },
+		"unknown game":      func(c *Config) { c.Game = "valorant" },
+		"bad bind":          func(c *Config) { c.Bind = "localhost" },
+		"port range":        func(c *Config) { c.Port = 70000 },
+		"port collision":    func(c *Config) { c.GamePorts = map[string]int{"rl": c.Port} },
+		"default clash":     func(c *Config) { c.Port = 7777 }, // Apex's default
+		"fixed port":        func(c *Config) { c.GamePorts = map[string]int{"lol": 3000} },
+		"unknown port game": func(c *Config) { c.GamePorts = map[string]int{"valorant": 3000} },
+		"fast interval":     func(c *Config) { c.Interval = Duration(10 * time.Millisecond) },
 	}
 	for name, mutate := range bad {
 		cfg := Default()

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -58,22 +59,39 @@ func run(ctx context.Context, args []string) error {
 // then flags. Flags always win over the file.
 func parseConfig(args []string) (cfg config.Config, noWindow bool, err error) {
 	cfg = config.Default()
-	path, noWindow, err := parseFlags(&cfg, args)
+	f, err := parseFlags(&cfg, args)
 	if err != nil {
-		return cfg, noWindow, err
+		return cfg, f.noWindow, err
 	}
-	if path != "" {
-		if cfg, err = config.Load(path); err != nil {
-			return cfg, noWindow, err
+	if f.path != "" {
+		if cfg, err = config.Load(f.path); err != nil {
+			return cfg, f.noWindow, err
 		}
-		if _, _, err := parseFlags(&cfg, args); err != nil {
-			return cfg, noWindow, err
+		if f, err = parseFlags(&cfg, args); err != nil {
+			return cfg, f.noWindow, err
 		}
 	}
-	return cfg, noWindow, cfg.Validate()
+	if f.gamePort != 0 {
+		if cfg.Game == "" {
+			return cfg, f.noWindow, errors.New("-game-port needs -game")
+		}
+		cfg.GamePorts = maps.Clone(cfg.GamePorts)
+		if cfg.GamePorts == nil {
+			cfg.GamePorts = map[string]int{}
+		}
+		cfg.GamePorts[cfg.Game] = f.gamePort
+	}
+	return cfg, f.noWindow, cfg.Validate()
 }
 
-func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
+// extraFlags are the flags that aren't settings.
+type extraFlags struct {
+	path     string
+	noWindow bool
+	gamePort int
+}
+
+func parseFlags(cfg *config.Config, args []string) (extraFlags, error) {
 	fs := flag.NewFlagSet("gamestate", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usage)
@@ -85,12 +103,9 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs.StringVar(&cfg.Bind, "bind", cfg.Bind, "address every listener binds to")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "relay WebSocket port Single Studio connects to")
 	fs.DurationVar((*time.Duration)(&cfg.Interval), "interval", time.Duration(cfg.Interval), "poll interval (sc2, lol)")
-	fs.IntVar(&cfg.GSIPort, "gsi-port", cfg.GSIPort, "GSI receiver port (cs2, dota2)")
-	fs.IntVar(&cfg.ApexPort, "apex-port", cfg.ApexPort, "LiveAPI WebSocket server port (apex)")
-	fs.IntVar(&cfg.RLPort, "rl-port", cfg.RLPort, "Stats API port the game serves (rl)")
-	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
+	gamePort := fs.Int("game-port", 0, "port for the -game game's feed, if not its default")
 	err := fs.Parse(args)
-	return *path, *noWindow, err
+	return extraFlags{*path, *noWindow, *gamePort}, err
 }
 
 // serve runs the relay, with the window unless gui is false.
@@ -101,12 +116,26 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		log.Warn("binding beyond loopback: GameState is reachable from the network", "bind", cfg.Bind)
 	}
 
-	// A broadcast port picked in the window is remembered, and used unless
-	// -port or a config file chose one.
+	// Ports picked in the window are remembered, and used unless a flag or
+	// config file chose that port.
 	statePath, _ := config.StatePath()
 	state := config.State{}
 	if statePath != "" {
 		state = config.LoadState(statePath)
+	}
+	for game, port := range state.GamePorts {
+		if _, set := cfg.GamePorts[game]; set {
+			continue
+		}
+		withSaved := cfg
+		withSaved.GamePorts = maps.Clone(cfg.GamePorts)
+		if withSaved.GamePorts == nil {
+			withSaved.GamePorts = map[string]int{}
+		}
+		withSaved.GamePorts[game] = port
+		if withSaved.Validate() == nil {
+			cfg = withSaved
+		}
 	}
 	if cfg.Port == config.DefaultPort && state.Port != 0 {
 		withSaved := cfg
@@ -128,11 +157,10 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	ctrl := control.New(adapter.Options{
 		Bind:     cfg.Bind,
 		Interval: time.Duration(cfg.Interval),
-		GSIPort:  cfg.GSIPort,
-		ApexPort: cfg.ApexPort,
-		RLPort:   cfg.RLPort,
-		SC2URL:   cfg.SC2URL,
 	}, hub, log)
+	for game, port := range cfg.GamePorts {
+		ctrl.SetPort(game, port)
+	}
 
 	var show atomic.Pointer[func()]
 	mux := http.NewServeMux()
@@ -191,21 +219,21 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	var err error
 	if gui {
 		runWindow(ctx, window{
-			ctrl:   ctrl,
-			errs:   errs,
-			hub:    hub,
-			log:    log,
-			relay:  rs,
-			bind:   cfg.Bind,
-			gsiURL: "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/",
-			rlPort: cfg.RLPort,
-			dark:   state.Theme != "light",
+			ctrl:  ctrl,
+			errs:  errs,
+			hub:   hub,
+			log:   log,
+			relay: rs,
+			bind:  cfg.Bind,
+			dark:  state.Theme != "light",
 			onTheme: func(dark bool) {
 				remember(func(s *config.State) { s.Theme = map[bool]string{true: "dark", false: "light"}[dark] })
 			},
 			onPort: func(port int) error {
-				if port == cfg.GSIPort || port == cfg.ApexPort || port == cfg.RLPort {
-					err := fmt.Errorf("port %d is used for receiving game state", port)
+				current := cfg
+				current.GamePorts = ctrl.Ports()
+				if game := current.PortUser(port); game != "" {
+					err := fmt.Errorf("port %d is %s's port", port, game)
 					log.Error("can't move the broadcast port", "err", err)
 					return err
 				}
@@ -214,6 +242,19 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 					return err
 				}
 				remember(func(s *config.State) { s.Port = port })
+				return nil
+			},
+			onGamePort: func(game string, port int) error {
+				if port == rs.Port() {
+					err := fmt.Errorf("port %d is the broadcast port", port)
+					log.Error("can't change the game port", "err", err)
+					return err
+				}
+				if err := ctrl.SetPort(game, port); err != nil {
+					log.Error("can't change the game port", "err", err)
+					return err
+				}
+				remember(func(s *config.State) { s.GamePorts = ctrl.Ports() })
 				return nil
 			},
 			show: &show,

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,31 +192,36 @@ func TestWSServerRelaysGameMessages(t *testing.T) {
 	}
 }
 
-func TestTCPStreamSplitsAndReconnects(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
+func TestWSClientRelaysAndReconnects(t *testing.T) {
+	// A fake game: each connection gets the queued messages, then is closed.
+	sessions := make(chan []string, 2)
+	sessions <- []string{`{"Event":"UpdateState","Data":"{\"MatchGuid\":\"a\"}"}`, `{"Event":"BallHit","Data":"{}"}`}
+	sessions <- []string{`{"Event":"MatchCreated","Data":"{}"}`}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		for _, m := range <-sessions {
+			conn.Write(r.Context(), websocket.MessageText, []byte(m))
+		}
+		conn.Close(websocket.StatusNormalClosure, "match over")
+	}))
+	defer srv.Close()
 
-	s := &TCPStream{Addr: ln.Addr().String(), Log: quiet, Retry: 10 * time.Millisecond}
+	cl := &WSClient{URL: "ws" + strings.TrimPrefix(srv.URL, "http"), Log: quiet, Retry: 10 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	c := newCollector()
 	done := make(chan error)
-	go func() { done <- s.Run(ctx, c.emit) }()
+	go func() { done <- cl.Run(ctx, c.emit) }()
 
-	// First connection: one message split across writes, then two in one
-	// write with no delimiter, as Rocket League sends them.
-	conn, err := ln.Accept()
-	if err != nil {
-		t.Fatal(err)
+	want := []string{
+		`{"Event":"UpdateState","Data":"{\"MatchGuid\":\"a\"}"}`,
+		`{"Event":"BallHit","Data":"{}"}`,
+		`{"Event":"MatchCreated","Data":"{}"}`, // after reconnecting
 	}
-	first := `{"Event":"UpdateState","Data":"{\"MatchGuid\":\"a}b\"}"}`
-	conn.Write([]byte(first[:20]))
-	time.Sleep(20 * time.Millisecond)
-	conn.Write([]byte(first[20:] + `{"Event":"BallHit","Data":"{}"}{"Event":"GoalScored","Data":"{}"}`))
-	want := []string{first, `{"Event":"BallHit","Data":"{}"}`, `{"Event":"GoalScored","Data":"{}"}`}
 	for range want {
 		c.wait(t)
 	}
@@ -229,20 +233,26 @@ func TestTCPStreamSplitsAndReconnects(t *testing.T) {
 	}
 	c.mu.Unlock()
 
-	// The game restarts: the adapter reconnects and keeps relaying.
-	conn.Close()
-	conn, err = ln.Accept()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	conn.Write([]byte(`{"Event":"MatchCreated","Data":"{}"}`))
-	if got := c.wait(t); string(got) != `{"Event":"MatchCreated","Data":"{}"}` {
-		t.Fatalf("after reconnect: got %s", got)
-	}
-
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Run returned %v after cancel, want nil", err)
+	}
+}
+
+func TestPortOverride(t *testing.T) {
+	a, err := New(CS2, Options{Bind: "127.0.0.1", Port: 50000, Log: quiet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.(*Receiver).Addr; got != "127.0.0.1:50000" {
+		t.Errorf("cs2 override: %s", got)
+	}
+	a, _ = New(RL, Options{Log: quiet})
+	if got := a.(*WSClient).URL; got != "ws://127.0.0.1:49124" {
+		t.Errorf("rl default: %s", got)
+	}
+	a, _ = New(SC2, Options{Port: 7000, Interval: time.Second, Log: quiet})
+	if got := a.(*Poller).Endpoints[0].URL; got != "http://127.0.0.1:7000/game" {
+		t.Errorf("sc2 override: %s", got)
 	}
 }

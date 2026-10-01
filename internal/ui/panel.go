@@ -39,15 +39,37 @@ const (
 // Valve's GSI guide was written for CS:GO, but CS2 and Dota 2 set up their
 // GSI files the same way.
 var (
-	gsiGuide, _ = url.Parse("https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration")
-	rlGuide, _  = url.Parse("https://www.rocketleague.com/en/developer/stats-api")
+	gsiGuide, _  = url.Parse("https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration")
+	rlGuide, _   = url.Parse("https://www.rocketleague.com/en/developer/stats-api")
+	apexGuide, _ = url.Parse("https://apexliveapi.com/")
 )
 
-// help is the setup hint shown under the game picker for one game.
+// help is the setup hint shown under the game picker for one game. url is
+// optional.
 type help struct {
 	text string
 	link string
 	url  *url.URL
+}
+
+// helpFor returns the setup hint for game, given the port it uses and the
+// address GameState listens on. Games that need no setup have none.
+func helpFor(game, bind string, port int) (help, bool) {
+	p := strconv.Itoa(port)
+	switch game {
+	case adapter.CS2, adapter.Dota2:
+		return help{"Your Game State Integration file should send to http://" + net.JoinHostPort(bind, p) + "/",
+			"Setup guide (Valve)", gsiGuide}, true
+	case adapter.Apex:
+		return help{`Launch Apex with +cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://` + net.JoinHostPort(bind, p) + `"`,
+			"LiveAPI guide", apexGuide}, true
+	case adapter.RL:
+		return help{"Turn on Rocket League's Stats API (PacketSendRate in DefaultStatsAPI.ini). GameState connects to its WebSocket (WebPort) on port " + p,
+			"Stats API guide (Psyonix)", rlGuide}, true
+	case adapter.SC2:
+		return help{"GameState reads StarCraft II's client API on port " + p + ". Match the -clientapi option if you start the game with one.", "", nil}, true
+	}
+	return help{}, false
 }
 
 // Panel is GameState's window content.
@@ -57,7 +79,6 @@ type Panel struct {
 	hub  *relay.Hub
 	bind string
 	port int // broadcast port being served; 0 when none
-	help map[string]help
 	app  fyne.App
 	win  fyne.Window
 
@@ -67,6 +88,9 @@ type Panel struct {
 	// OnPort moves the broadcast port. It reports failures itself (they
 	// land in the error pane) and returns them so the panel can revert.
 	OnPort func(port int) error
+
+	// OnGamePort changes a game's port, reporting failures the same way.
+	OnGamePort func(game string, port int) error
 
 	// do runs a function on the UI thread; tests swap it for a queue.
 	do func(func())
@@ -79,8 +103,9 @@ type Panel struct {
 	powerLabel *widget.Label
 	status     *widget.Label
 	meta       *widget.Label
-	portEntry  *widget.Entry
-	portApply  *widget.Button
+	bcast      *portField // broadcast port
+	gamePort   *portField // selected game's port, for games where it can change
+	shownGame  string     // game the game-port box was last filled for
 	helpBox    *fyne.Container
 	helpText   *widget.Label
 	helpLink   *widget.Hyperlink
@@ -100,26 +125,15 @@ type Panel struct {
 
 // Options configures a Panel.
 type Options struct {
-	Bind   string // address the broadcast port is on
-	Port   int    // broadcast port Single Studio connects to; 0 if it couldn't open
-	GSIURL string // where CS2 and Dota 2 should send game state
-	RLPort int    // where Rocket League's Stats API is read from
-	Dark   bool
+	Bind string // address the broadcast port is on
+	Port int    // broadcast port Single Studio connects to; 0 if it couldn't open
+	Dark bool
 }
 
 // NewPanel builds the window content and sets it on win.
 func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, o Options) *Panel {
-	gsi := help{"Your Game State Integration file should send to " + o.GSIURL, "Setup guide (Valve)", gsiGuide}
-	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, bind: o.Bind, port: o.Port, app: a, win: win, dark: o.Dark, do: fyne.Do,
-		help: map[string]help{
-			adapter.CS2:   gsi,
-			adapter.Dota2: gsi,
-			adapter.RL: {
-				fmt.Sprintf("Turn on Rocket League's Stats API (PacketSendRate in DefaultStatsAPI.ini); it's read from port %d", o.RLPort),
-				"Stats API guide (Psyonix)", rlGuide,
-			},
-		},
-	}
+	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, bind: o.Bind, port: o.Port, app: a, win: win, dark: o.Dark, do: fyne.Do}
+	uiThread := func(f func()) { p.do(f) } // p.do may be swapped after construction
 	// Set the theme before building widgets so their first frame uses it.
 	a.Settings().SetTheme(newTheme(o.Dark))
 
@@ -139,7 +153,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	p.game.PlaceHolder = "Choose a game…"
 
 	// Some games only send data once the user has set them up (a GSI file,
-	// an ini setting). That setup is theirs to do; say what SSG expects and
+	// an ini setting). That setup is theirs to do; say what GameState expects and
 	// link to the game's own guide.
 	p.helpText = widget.NewLabel("")
 	p.helpText.Wrapping = fyne.TextWrapWord
@@ -154,19 +168,30 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	p.status = widget.NewLabel("Not relaying")
 	p.power = NewSwitch(p.onPower)
 
-	portLabel := widget.NewLabel("Broadcast port")
-	p.portEntry = widget.NewEntry()
-	p.portEntry.Validator = func(s string) error {
-		_, err := parsePort(s)
-		return err
+	// The game's own port, for games where the user may have changed it.
+	p.gamePort = newPortField("Game port", uiThread)
+	p.gamePort.onApply = func(port int) error {
+		if p.OnGamePort == nil {
+			return errors.New("game port can't be changed")
+		}
+		return p.OnGamePort(p.ctrl.State().Game, port)
 	}
-	p.portEntry.OnChanged = func(string) { p.updatePortApply() }
-	p.portEntry.OnSubmitted = func(string) { p.applyPort() }
-	p.portApply = widget.NewButton("Apply", p.applyPort)
-	if o.Port != 0 {
-		p.portEntry.SetText(strconv.Itoa(o.Port))
+	p.gamePort.applied = func(int) { p.Refresh() }
+	p.gamePort.row.Hide()
+
+	// The port Single Studio connects to.
+	p.bcast = newPortField("Broadcast port", uiThread)
+	p.bcast.onApply = func(port int) error {
+		if p.OnPort == nil {
+			return errors.New("broadcast port can't be changed")
+		}
+		return p.OnPort(port)
 	}
-	p.updatePortApply()
+	p.bcast.applied = func(port int) {
+		p.port = port
+		p.Refresh()
+	}
+	p.bcast.Set(o.Port)
 
 	p.meta = widget.NewLabel("")
 	p.meta.Wrapping = fyne.TextWrapWord
@@ -192,8 +217,9 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 		container.NewBorder(nil, nil, nil, p.themeBtn, title),
 		container.NewVBox(gameCaption, p.game),
 		p.helpBox,
+		p.gamePort.row,
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
-		container.NewBorder(nil, nil, portLabel, p.portApply, p.portEntry),
+		p.bcast.row,
 		p.meta,
 		p.errPane,
 	)))
@@ -231,55 +257,8 @@ func (p *Panel) Run(ctx context.Context) {
 // port the game controls are inert until the user picks one that works.
 func (p *Panel) SetPort(port int) {
 	p.port = port
-	if port != 0 {
-		p.portEntry.SetText(strconv.Itoa(port))
-	}
-	p.updatePortApply()
+	p.bcast.Set(port)
 	p.Refresh()
-}
-
-func parsePort(s string) (int, error) {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil || n < 1 || n > 65535 {
-		return 0, errors.New("enter a port from 1 to 65535")
-	}
-	return n, nil
-}
-
-// updatePortApply enables Apply only for a valid port that isn't the
-// current one.
-func (p *Panel) updatePortApply() {
-	n, err := parsePort(p.portEntry.Text)
-	if err != nil || n == p.port {
-		p.portApply.Disable()
-	} else {
-		p.portApply.Enable()
-	}
-}
-
-func (p *Panel) applyPort() {
-	n, err := parsePort(p.portEntry.Text)
-	if err != nil || n == p.port || p.OnPort == nil {
-		return
-	}
-	p.portApply.Disable()
-	// Moving the port waits for the old server to shut down; keep that off
-	// the UI thread.
-	go func() {
-		err := p.OnPort(n)
-		p.do(func() {
-			if err == nil {
-				p.SetPort(n)
-				return
-			}
-			// Put back the port that is still being served.
-			if p.port != 0 {
-				p.portEntry.SetText(strconv.Itoa(p.port))
-			}
-			p.updatePortApply()
-			p.Refresh()
-		})
-	}()
 }
 
 // Refresh redraws the panel from the controller's state. It must run on the
@@ -294,14 +273,30 @@ func (p *Panel) Refresh() {
 		p.game.ClearSelected()
 	}
 	p.updating = false
-	if h, ok := p.help[st.Game]; ok {
+	gamePort := p.ctrl.Port(st.Game)
+	if h, ok := helpFor(st.Game, p.bind, gamePort); ok {
 		p.helpText.SetText(h.text)
 		p.helpLink.SetText(h.link)
 		p.helpLink.SetURL(h.url)
+		if h.url != nil {
+			p.helpLink.Show()
+		} else {
+			p.helpLink.Hide()
+		}
 		p.helpBox.Show()
 	} else {
 		p.helpBox.Hide()
 	}
+	if gamePort != 0 {
+		// Refill the box only when the game changes, so typing isn't lost.
+		if st.Game != p.shownGame {
+			p.gamePort.Set(gamePort)
+		}
+		p.gamePort.row.Show()
+	} else {
+		p.gamePort.row.Hide()
+	}
+	p.shownGame = st.Game
 	broadcasting := p.port != 0
 	if broadcasting {
 		p.game.Enable()

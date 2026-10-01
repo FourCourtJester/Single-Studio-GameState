@@ -33,8 +33,24 @@ func TestFlagsOverrideConfigFile(t *testing.T) {
 	}
 }
 
+func TestGamePortFlag(t *testing.T) {
+	cfg, _, err := parseConfig([]string{"-game", "rl", "-game-port", "50124"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GamePort("rl") != 50124 || cfg.GamePort("apex") != 7777 {
+		t.Fatalf("got rl=%d apex=%d", cfg.GamePort("rl"), cfg.GamePort("apex"))
+	}
+	if _, _, err := parseConfig([]string{"-game-port", "50124"}); err == nil {
+		t.Error("-game-port without -game should fail")
+	}
+	if _, _, err := parseConfig([]string{"-game", "lol", "-game-port", "3000"}); err == nil {
+		t.Error("League's port is fixed; -game-port should fail")
+	}
+}
+
 func TestServeStopsOnCancel(t *testing.T) {
-	args := []string{"-no-window", "-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
+	args := []string{"-no-window", "-game", "cs2", "-port", freePort(t), "-game-port", freePort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error)
 	go func() { errc <- run(ctx, args) }()

@@ -38,17 +38,20 @@ type Title struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Available bool   `json:"available"`
+	// DefaultPort is the port used to reach the game's feed, which users can
+	// change to match their own setup. 0 means the port is fixed.
+	DefaultPort int `json:"defaultPort,omitempty"`
 }
 
 // Titles lists every game, in picker order.
 var Titles = []Title{
-	{Apex, "Apex Legends", true},
-	{CS2, "Counter-Strike 2", true},
-	{Dota2, "Dota 2", true},
-	{LoL, "League of Legends", true},
-	{RL, "Rocket League", true},
-	{SC2, "StarCraft II", true},
-	{War3, "Warcraft III", false},
+	{Apex, "Apex Legends", true, 7777},     // LiveAPI server GameState hosts; the port in its docs
+	{CS2, "Counter-Strike 2", true, 47601}, // GSI receiver GameState hosts
+	{Dota2, "Dota 2", true, 47601},         // GSI receiver GameState hosts
+	{LoL, "League of Legends", true, 0},    // Riot fixes the live client port at 2999
+	{RL, "Rocket League", true, 49124},     // Stats API WebSocket the game serves (WebPort)
+	{SC2, "StarCraft II", true, 6119},      // client API the game serves (-clientapi)
+	{War3, "Warcraft III", false, 0},
 }
 
 // Lookup returns the title for a namespace.
@@ -69,10 +72,7 @@ var ErrNotImplemented = errors.New("adapter not implemented")
 type Options struct {
 	Bind     string        // interface receive adapters listen on
 	Interval time.Duration // poll interval for poll adapters
-	GSIPort  int           // CS2 / Dota 2 Game State Integration receiver
-	ApexPort int           // Apex LiveAPI WebSocket server
-	RLPort   int           // Rocket League Stats API socket the game serves
-	SC2URL   string        // StarCraft II client API base URL
+	Port     int           // the game's port; 0 means the title's default
 	Log      *slog.Logger
 }
 
@@ -82,6 +82,13 @@ func New(game string, o Options) (Adapter, error) {
 		o.Log = slog.Default()
 	}
 	log := o.Log.With("game", game)
+	port := o.Port
+	if t, ok := Lookup(game); ok && port == 0 {
+		port = t.DefaultPort
+	}
+	local := func(scheme string) string { // where a game on this machine serves its feed
+		return scheme + "://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	}
 
 	switch game {
 	case SC2:
@@ -89,8 +96,8 @@ func New(game string, o Options) (Adapter, error) {
 			Client:   newHTTPClient(),
 			Interval: o.Interval,
 			Endpoints: []Endpoint{
-				{Name: "game", URL: o.SC2URL + "/game"},
-				{Name: "ui", URL: o.SC2URL + "/ui"},
+				{Name: "game", URL: local("http") + "/game"},
+				{Name: "ui", URL: local("http") + "/ui"},
 			},
 			Log: log,
 		}, nil
@@ -103,21 +110,16 @@ func New(game string, o Options) (Adapter, error) {
 		}, nil
 	case CS2, Dota2:
 		return &Receiver{
-			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(o.GSIPort)),
+			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(port)),
 			Log:  log,
 		}, nil
 	case Apex:
 		return &WSServer{
-			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(o.ApexPort)),
+			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(port)),
 			Log:  log,
 		}, nil
 	case RL:
-		// The game serves the socket on this machine; bind doesn't apply.
-		return &TCPStream{
-			Addr:  net.JoinHostPort("127.0.0.1", strconv.Itoa(o.RLPort)),
-			Log:   log,
-			Retry: 2 * time.Second,
-		}, nil
+		return &WSClient{URL: local("ws"), Log: log, Retry: 2 * time.Second}, nil
 	case War3:
 		// Observer data is known to exist, but its transport is unverified.
 		return nil, fmt.Errorf("%s: %w (transport still to be confirmed)", game, ErrNotImplemented)
