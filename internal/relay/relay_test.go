@@ -1,8 +1,8 @@
 package relay
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,22 +10,6 @@ import (
 
 	"github.com/coder/websocket"
 )
-
-func TestEncodeJSON(t *testing.T) {
-	got := Encode("sc2", []byte(`{"isReplay":false}`), time.UnixMilli(42))
-	want := `{"ns":"sc2","ts":42,"data":{"isReplay":false}}`
-	if string(got) != want {
-		t.Fatalf("got %s, want %s", got, want)
-	}
-}
-
-func TestEncodeBinary(t *testing.T) {
-	got := Encode("apex", []byte{0x0a, 0x01, 0xff}, time.UnixMilli(1))
-	want := `{"ns":"apex","ts":1,"encoding":"base64","data":"CgH/"}`
-	if string(got) != want {
-		t.Fatalf("got %s, want %s", got, want)
-	}
-}
 
 func dial(t *testing.T, srv *httptest.Server) (*websocket.Conn, context.Context) {
 	t.Helper()
@@ -40,17 +24,13 @@ func dial(t *testing.T, srv *httptest.Server) (*websocket.Conn, context.Context)
 	return conn, ctx
 }
 
-func read(t *testing.T, ctx context.Context, conn *websocket.Conn) Envelope {
+func read(t *testing.T, ctx context.Context, conn *websocket.Conn) (websocket.MessageType, []byte) {
 	t.Helper()
-	_, data, err := conn.Read(ctx)
+	typ, data, err := conn.Read(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var env Envelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		t.Fatal(err)
-	}
-	return env
+	return typ, data
 }
 
 func waitForClients(t *testing.T, h *Hub, n int) {
@@ -64,7 +44,7 @@ func waitForClients(t *testing.T, h *Hub, n int) {
 	}
 }
 
-func TestHubPublishesToClients(t *testing.T) {
+func TestHubPassesMessagesThroughUnchanged(t *testing.T) {
 	hub := NewHub([]string{"*"}, nil)
 	srv := httptest.NewServer(hub)
 	defer srv.Close()
@@ -73,11 +53,20 @@ func TestHubPublishesToClients(t *testing.T) {
 	b, _ := dial(t, srv)
 	waitForClients(t, hub, 2)
 
-	hub.Publish("cs2", []byte(`{"round":3}`))
-	for _, c := range []*websocket.Conn{a, b} {
-		env := read(t, ctx, c)
-		if env.NS != "cs2" || string(env.Data) != `{"round":3}` {
-			t.Fatalf("unexpected envelope %+v", env)
+	cases := []struct {
+		msg []byte
+		typ websocket.MessageType
+	}{
+		{[]byte(`{"Event":"UpdateState","Data":"{\"MatchGuid\":\"a\"}"}`), websocket.MessageText},
+		{[]byte{0x0a, 0x01, 0xff}, websocket.MessageBinary}, // protobuf from Apex
+	}
+	for _, c := range cases {
+		hub.Publish(c.msg)
+		for _, conn := range []*websocket.Conn{a, b} {
+			typ, got := read(t, ctx, conn)
+			if typ != c.typ || !bytes.Equal(got, c.msg) {
+				t.Fatalf("got %v %q, want %v %q", typ, got, c.typ, c.msg)
+			}
 		}
 	}
 }
@@ -87,13 +76,27 @@ func TestHubReplaysLatestOnConnect(t *testing.T) {
 	srv := httptest.NewServer(hub)
 	defer srv.Close()
 
-	hub.Publish("sc2", []byte(`{"tick":1}`))
-	hub.Publish("sc2", []byte(`{"tick":2}`))
+	hub.Publish([]byte(`{"tick":1}`))
+	hub.Publish([]byte(`{"tick":2}`))
 
 	conn, ctx := dial(t, srv)
-	env := read(t, ctx, conn)
-	if string(env.Data) != `{"tick":2}` {
-		t.Fatalf("replayed %s, want the latest payload", env.Data)
+	if _, got := read(t, ctx, conn); string(got) != `{"tick":2}` {
+		t.Fatalf("replayed %s, want the latest message", got)
+	}
+}
+
+func TestHubForgetsOnGameSwitch(t *testing.T) {
+	hub := NewHub([]string{"*"}, nil)
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+
+	hub.Publish([]byte(`{"old":"game"}`))
+	hub.Forget()
+	conn, ctx := dial(t, srv)
+	waitForClients(t, hub, 1)
+	hub.Publish([]byte(`{"new":"game"}`))
+	if _, got := read(t, ctx, conn); string(got) != `{"new":"game"}` {
+		t.Fatalf("got %s first; the previous game's message should be forgotten", got)
 	}
 }
 

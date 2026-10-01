@@ -10,7 +10,7 @@ for the titles below.
 
 ## Supported titles
 
-| Title             | Namespace | How GameState gets the data                          | Default port | Status          |
+| Title             | ID        | How GameState gets the data                          | Default port | Status          |
 | ----------------- | --------- | ---------------------------------------------------- | ------------ | --------------- |
 | Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | 7777      | Implemented     |
 | Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                | 47601        | Implemented     |
@@ -95,7 +95,7 @@ to use for the selected game, with a link to that game's own guide.
   covers the file for both games.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
-  JSON payloads are relayed as-is. Protobuf payloads are relayed base64-encoded.
+  JSON is relayed as text, protobuf as binary, both unchanged.
 - **Rocket League:** turn on the game's
   [Stats API](https://www.rocketleague.com/en/developer/stats-api) by setting
   `PacketSendRate` in `DefaultStatsAPI.ini` (that file is yours to manage).
@@ -115,7 +115,7 @@ to use for the selected game, with a link to that game's own guide.
 | `-bind`      | `bind`           | `127.0.0.1`             | all        |
 | `-port`      | `port`           | `47600` (or the port set in the window) | relay |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
-| `-game-port` | `gamePorts`      | each title's default, or the port set in the window | the `-game` game; `gamePorts` maps namespace to port, e.g. `{"rl": 49125}` |
+| `-game-port` | `gamePorts`      | each title's default, or the port set in the window | the `-game` game; `gamePorts` maps game ID to port, e.g. `{"rl": 49125}` |
 | (none)       | `allowedOrigins` | `["*"]`                 | relay      |
 
 Every listener binds to 127.0.0.1 by default, so nothing is reachable from
@@ -123,20 +123,24 @@ the network. The default ports are provisional.
 
 ## Wire format
 
-Each WebSocket message is one JSON envelope:
+GameState is a transparent pass-through. Every message the active game sends
+goes out on the broadcast port exactly as the game sent it, with nothing
+added, wrapped or changed:
 
-```json
-{ "ns": "sc2", "ts": 1790822970435, "data": { "game": { ... }, "ui": { ... } } }
-```
+- Text messages (JSON from every game) are sent as WebSocket text frames.
+- Anything else (Apex LiveAPI in protobuf mode) is sent as binary frames.
 
-- `ns` is the game namespace. Single Studio saves `data` under it.
-- `ts` is the time GameState received the payload, in Unix milliseconds.
-- `data` is the payload verbatim when it is JSON. Otherwise it is a base64
-  string and `"encoding": "base64"` is set.
+One game runs at a time, so everything on the port belongs to the game
+selected in the window. A newly connected client immediately receives the
+latest message; switching games clears it, so a client never gets the
+previous game's data.
+
+The one exception is StarCraft II, whose client API answers on two
+addresses (`/game` and `/ui`). Each poll combines the two answers into one
+message, `{"game": ..., "ui": ...}`, so a tick arrives as a single update.
 
 Full payloads are sent on every tick, and Yjs only emits updates for keys
-that changed. A newly connected client immediately receives the latest
-payload.
+that changed.
 
 ## Development
 
@@ -163,7 +167,7 @@ in each state to PNGs, for checking visual changes.
 Layout:
 
 - `cmd/gamestate`: flags, the relay server and the window
-- `internal/relay`: the envelope and the WebSocket fan-out hub
+- `internal/relay`: the pass-through WebSocket fan-out hub
 - `internal/adapter`: per-title acquisition (poll, receive HTTP, host a WebSocket)
 - `internal/config`: settings, defaults, validation and remembered choices
 - `internal/control`: starts, stops and switches the adapter; collects errors

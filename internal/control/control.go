@@ -113,8 +113,7 @@ func (c *Controller) State() State {
 	return s
 }
 
-// Select picks the game. If GameState is on, it switches over at once;
-// the old game's namespace is left in place in Single Studio.
+// Select picks the game. If GameState is on, it switches over at once.
 func (c *Controller) Select(game string) error {
 	if _, ok := adapter.Lookup(game); !ok {
 		return fmt.Errorf("unknown game %q", game)
@@ -127,8 +126,13 @@ func (c *Controller) Select(game string) error {
 	c.game = game
 	c.mu.Unlock()
 
-	if changed && c.OnSelect != nil {
-		c.OnSelect(game)
+	if changed {
+		// The hub's latest message belongs to the old game; don't send it
+		// to clients that connect from now on.
+		c.hub.Forget()
+		if c.OnSelect != nil {
+			c.OnSelect(game)
+		}
 	}
 	if changed && running {
 		return c.start()
@@ -185,7 +189,7 @@ func (c *Controller) start() error {
 		c.mu.Lock()
 		c.lastData = time.Now()
 		c.mu.Unlock()
-		c.hub.Publish(game, data)
+		c.hub.Publish(data)
 	}
 	go func() {
 		defer close(done)

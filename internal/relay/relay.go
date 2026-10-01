@@ -1,44 +1,19 @@
-// Package relay fans raw game payloads out to browser clients over one local
-// WebSocket. It does no shaping or diffing: every payload is wrapped in a
-// namespaced envelope and sent as-is. Yjs on the Single Studio side turns
-// repeated identical payloads into no-ops.
+// Package relay passes game messages through to Single Studio over one local
+// WebSocket. Every message goes out exactly as the game sent it: nothing is
+// wrapped, added or changed. Yjs on the Single Studio side turns repeated
+// identical payloads into no-ops.
 package relay
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 )
-
-// Envelope is the one message shape every title is delivered in.
-//
-// Data holds the payload verbatim when it is JSON. Anything else (for example
-// Apex LiveAPI in protobuf mode) is base64-encoded and Encoding is "base64".
-type Envelope struct {
-	NS       string          `json:"ns"`
-	TS       int64           `json:"ts"`
-	Encoding string          `json:"encoding,omitempty"`
-	Data     json.RawMessage `json:"data"`
-}
-
-// Encode wraps a raw payload in an Envelope and marshals it.
-func Encode(ns string, data []byte, now time.Time) []byte {
-	env := Envelope{NS: ns, TS: now.UnixMilli()}
-	if json.Valid(data) {
-		env.Data = data
-	} else {
-		env.Encoding = "base64"
-		env.Data, _ = json.Marshal(base64.StdEncoding.EncodeToString(data))
-	}
-	out, _ := json.Marshal(env)
-	return out
-}
 
 const (
 	sendBuffer   = 64
@@ -52,16 +27,16 @@ type client struct {
 	reason string
 }
 
-// Hub holds the connected browser clients and the latest payload per
-// namespace, so a client that connects (or reconnects) mid-session gets the
-// current state immediately instead of waiting for the next tick.
+// Hub holds the connected clients and the latest message, so a client that
+// connects (or reconnects) mid-session gets the current state immediately
+// instead of waiting for the next one.
 type Hub struct {
 	origins []string
 	log     *slog.Logger
 
 	mu          sync.Mutex
 	clients     map[*client]struct{}
-	last        map[string][]byte
+	last        []byte
 	lastPublish time.Time
 }
 
@@ -75,19 +50,15 @@ func NewHub(origins []string, log *slog.Logger) *Hub {
 		origins: origins,
 		log:     log,
 		clients: make(map[*client]struct{}),
-		last:    make(map[string][]byte),
 	}
 }
 
-// Publish sends a raw payload to every connected client under namespace ns.
-func (h *Hub) Publish(ns string, data []byte) {
-	now := time.Now()
-	msg := Encode(ns, data, now)
-
+// Publish sends a game message to every connected client, unchanged.
+func (h *Hub) Publish(msg []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.last[ns] = msg
-	h.lastPublish = now
+	h.last = msg
+	h.lastPublish = time.Now()
 	for c := range h.clients {
 		select {
 		case c.send <- msg:
@@ -100,9 +71,17 @@ func (h *Hub) Publish(ns string, data []byte) {
 	}
 }
 
+// Forget drops the latest message, so clients that connect after a switch
+// to another game aren't sent the previous game's state.
+func (h *Hub) Forget() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.last = nil
+}
+
 // DisconnectAll closes every client connection, for when the relay moves
-// to another port. Clients keep the latest payloads; they get them again
-// when they reconnect on the new port.
+// to another port. The latest message is kept; clients get it again when
+// they reconnect on the new port.
 func (h *Hub) DisconnectAll() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -131,8 +110,8 @@ func (h *Hub) Stats() Stats {
 	return Stats{Clients: len(h.clients), LastPublish: h.lastPublish}
 }
 
-// ServeHTTP upgrades the request to a WebSocket and streams envelopes to it
-// until the client goes away. Clients are receive-only.
+// ServeHTTP upgrades the request to a WebSocket and streams game messages to
+// it until the client goes away. Clients are receive-only.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.origins})
 	if err != nil {
@@ -147,8 +126,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	c := &client{send: make(chan []byte, sendBuffer)}
 	h.mu.Lock()
-	for _, msg := range h.last {
-		c.send <- msg
+	if h.last != nil {
+		c.send <- h.last
 	}
 	h.clients[c] = struct{}{}
 	h.mu.Unlock()
@@ -180,8 +159,14 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// write sends msg as the game sent it: text such as JSON as a text frame,
+// anything else (Apex LiveAPI in protobuf mode) as a binary frame.
 func write(ctx context.Context, conn *websocket.Conn, msg []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	return conn.Write(ctx, websocket.MessageText, msg)
+	typ := websocket.MessageText
+	if !utf8.Valid(msg) {
+		typ = websocket.MessageBinary
+	}
+	return conn.Write(ctx, typ, msg)
 }
