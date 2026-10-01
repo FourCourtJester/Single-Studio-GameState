@@ -47,16 +47,16 @@ func (c *collector) wait(t *testing.T) []byte {
 }
 
 func TestNewCoversEveryGame(t *testing.T) {
-	for _, game := range Games {
-		a, err := New(game, Options{Bind: "127.0.0.1", Interval: time.Second, Log: quiet})
-		if game == War3 {
+	for _, title := range Titles {
+		a, err := New(title.ID, Options{Bind: "127.0.0.1", Interval: time.Second, Log: quiet})
+		if !title.Available {
 			if !errors.Is(err, ErrNotImplemented) {
-				t.Errorf("war3: got %v, want ErrNotImplemented", err)
+				t.Errorf("%s: got %v, want ErrNotImplemented", title.ID, err)
 			}
 			continue
 		}
 		if err != nil || a == nil {
-			t.Errorf("%s: got %v, %v", game, a, err)
+			t.Errorf("%s: got %v, %v", title.ID, a, err)
 		}
 	}
 	if _, err := New("valorant", Options{}); err == nil {

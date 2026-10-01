@@ -25,7 +25,7 @@ func TestFlagsOverrideConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
 	os.WriteFile(path, []byte(`{"game":"lol","port":40000}`), 0o644)
 
-	cfg, err := parseConfig([]string{"-config", path, "-port", "40001"})
+	cfg, _, err := parseConfig([]string{"-config", path, "-port", "40001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestGSIConfigCommand(t *testing.T) {
 }
 
 func TestServeStopsOnCancel(t *testing.T) {
-	args := []string{"-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
+	args := []string{"-no-browser", "-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error)
 	go func() { errc <- run(ctx, args, nil) }()

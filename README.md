@@ -21,16 +21,30 @@ for the titles below.
 
 ## Usage
 
-```sh
-companion -game sc2                 # poll StarCraft II once a second
-companion -game sc2 -interval 250ms # poll at 4 Hz
-companion -game cs2                 # wait for CS2 GSI posts
-companion -game apex                # wait for Apex to connect
-companion -config companion.json    # read settings from a file; flags still win
-```
+Double-click the companion. It opens its control panel in your browser:
+
+![Control panel](docs/panel.png)
+
+- **Game:** pick the title you're streaming. The choice is remembered.
+- **On/off:** start or stop relaying. Switching games while on swaps over
+  straight away; the old game's data stays in Single Studio.
+- **Errors:** appears only when something goes wrong (a port already in use,
+  a rejected GSI token) and disappears when cleared.
+
+Closing the browser tab leaves the companion running; launching it again
+reopens the panel. Close the companion's console window to quit.
 
 Single Studio connects to `ws://127.0.0.1:47600/ws`. `GET /status` reports the
-game, the connected client count and when the last payload arrived.
+game, whether it is on, the connected overlay count and when the last payload
+arrived.
+
+For headless use, flags skip the panel:
+
+```sh
+companion -no-browser -game sc2                 # relay StarCraft II immediately
+companion -no-browser -game sc2 -interval 250ms # poll at 4 Hz
+companion -config companion.json                # read settings from a file; flags still win
+```
 
 ### Per-game setup
 
@@ -53,7 +67,7 @@ game, the connected client count and when the last payload arrived.
 
 | Flag         | JSON key         | Default                 | Used by    |
 | ------------ | ---------------- | ----------------------- | ---------- |
-| `-game`      | `game`           | (required)              | all        |
+| `-game`      | `game`           | none (pick in panel)    | all        |
 | `-bind`      | `bind`           | `127.0.0.1`             | all        |
 | `-port`      | `port`           | `47600`                 | relay      |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
@@ -97,7 +111,6 @@ Layout:
 - `internal/relay`: the envelope and the WebSocket fan-out hub
 - `internal/adapter`: per-title acquisition (poll, receive HTTP, host a WebSocket)
 - `internal/gsi`: CS2 / Dota 2 GSI config generation
-- `internal/config`: settings, defaults and validation
-
-The config UI described in the handoff is not built yet. It will be served
-from `/` on the relay port.
+- `internal/config`: settings, defaults, validation and the remembered game
+- `internal/control`: starts, stops and switches the adapter; collects errors
+- `internal/ui`: the control panel page and its JSON API

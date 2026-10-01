@@ -32,8 +32,32 @@ const (
 	War3  = "war3"
 )
 
-// Games lists every namespace the companion knows about.
-var Games = []string{Apex, SC2, LoL, CS2, Dota2, War3}
+// Title is a game the companion knows about, as shown in the game picker.
+type Title struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+}
+
+// Titles lists every game, in picker order.
+var Titles = []Title{
+	{Apex, "Apex Legends", true},
+	{CS2, "Counter-Strike 2", true},
+	{Dota2, "Dota 2", true},
+	{LoL, "League of Legends", true},
+	{SC2, "StarCraft II", true},
+	{War3, "Warcraft III", false},
+}
+
+// Lookup returns the title for a namespace.
+func Lookup(id string) (Title, bool) {
+	for _, t := range Titles {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return Title{}, false
+}
 
 // ErrNotImplemented is returned for titles whose transport is not yet known.
 var ErrNotImplemented = errors.New("adapter not implemented")

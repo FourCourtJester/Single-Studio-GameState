@@ -3,7 +3,6 @@ package adapter
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 
 	"github.com/coder/websocket"
@@ -22,7 +21,7 @@ type WSServer struct {
 
 // Run serves until ctx is cancelled.
 func (s *WSServer) Run(ctx context.Context, emit func([]byte)) error {
-	ln, err := net.Listen("tcp", s.Addr)
+	ln, err := listen(s.Addr)
 	if err != nil {
 		return err
 	}

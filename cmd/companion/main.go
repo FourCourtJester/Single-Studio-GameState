@@ -21,14 +21,16 @@ import (
 
 	"github.com/fourcourtjester/single-studio-gamestate/internal/adapter"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/config"
+	"github.com/fourcourtjester/single-studio-gamestate/internal/control"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/gsi"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/relay"
+	"github.com/fourcourtjester/single-studio-gamestate/internal/ui"
 )
 
 const usage = `Single Studio Companion
 
 Usage:
-  companion [flags]             run the relay for one game
+  companion [flags]             run the companion and open its control panel
   companion gsi-config [flags]  print the CS2 / Dota 2 GSI config file
 
 Games: apex, sc2, lol, cs2, dota2, war3
@@ -52,43 +54,44 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if printGSI {
 		args = args[1:]
 	}
-	cfg, err := parseConfig(args)
+	cfg, noBrowser, err := parseConfig(args)
 	if err != nil {
 		return err
 	}
 	if printGSI {
 		return printGSIConfig(cfg, stdout)
 	}
-	return serve(ctx, cfg)
+	return serve(ctx, cfg, !noBrowser)
 }
 
 // parseConfig builds the config from defaults, an optional -config file,
 // then flags. Flags always win over the file.
-func parseConfig(args []string) (config.Config, error) {
-	cfg := config.Default()
-	path, err := parseFlags(&cfg, args)
+func parseConfig(args []string) (cfg config.Config, noBrowser bool, err error) {
+	cfg = config.Default()
+	path, noBrowser, err := parseFlags(&cfg, args)
 	if err != nil {
-		return cfg, err
+		return cfg, noBrowser, err
 	}
 	if path != "" {
 		if cfg, err = config.Load(path); err != nil {
-			return cfg, err
+			return cfg, noBrowser, err
 		}
-		if _, err := parseFlags(&cfg, args); err != nil {
-			return cfg, err
+		if _, _, err := parseFlags(&cfg, args); err != nil {
+			return cfg, noBrowser, err
 		}
 	}
-	return cfg, cfg.Validate()
+	return cfg, noBrowser, cfg.Validate()
 }
 
-func parseFlags(cfg *config.Config, args []string) (string, error) {
+func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs := flag.NewFlagSet("companion", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
 	}
 	path := fs.String("config", "", "path to a JSON config file")
-	fs.StringVar(&cfg.Game, "game", cfg.Game, "game namespace to relay")
+	noBrowser := fs.Bool("no-browser", false, "don't open the control panel on start")
+	fs.StringVar(&cfg.Game, "game", cfg.Game, "game to start relaying immediately")
 	fs.StringVar(&cfg.Bind, "bind", cfg.Bind, "address every listener binds to")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "relay WebSocket port Single Studio connects to")
 	fs.DurationVar((*time.Duration)(&cfg.Interval), "interval", time.Duration(cfg.Interval), "poll interval (sc2, lol)")
@@ -97,10 +100,13 @@ func parseFlags(cfg *config.Config, args []string) (string, error) {
 	fs.IntVar(&cfg.ApexPort, "apex-port", cfg.ApexPort, "LiveAPI WebSocket server port (apex)")
 	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
 	err := fs.Parse(args)
-	return *path, err
+	return *path, *noBrowser, err
 }
 
 func printGSIConfig(cfg config.Config, w io.Writer) error {
+	if cfg.Game == "" {
+		return errors.New("gsi-config needs -game cs2 or -game dota2")
+	}
 	uri := "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/"
 	out, err := gsi.Config(cfg.Game, uri, cfg.GSIToken)
 	if err != nil {
@@ -111,68 +117,93 @@ func printGSIConfig(cfg config.Config, w io.Writer) error {
 	return err
 }
 
-func serve(ctx context.Context, cfg config.Config) error {
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
+	errs := &control.ErrorLog{}
+	log := slog.New(errs.Handler(slog.NewTextHandler(os.Stderr, nil)))
 	if !cfg.Loopback() {
 		log.Warn("binding beyond loopback: the companion is reachable from the network", "bind", cfg.Bind)
 	}
 
-	a, err := adapter.New(cfg.Game, adapter.Options{
+	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
+	panel := "http://" + addr + "/"
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		// Most likely the companion is already running: show its panel.
+		if openBrowser && alreadyRunning(panel) {
+			fmt.Fprintln(os.Stderr, "companion is already running at", panel)
+			return ui.Open(panel)
+		}
+		return err
+	}
+
+	hub := relay.NewHub(cfg.AllowedOrigins, log)
+	ctrl := control.New(adapter.Options{
 		Bind:     cfg.Bind,
 		Interval: time.Duration(cfg.Interval),
 		GSIPort:  cfg.GSIPort,
 		GSIToken: cfg.GSIToken,
 		ApexPort: cfg.ApexPort,
 		SC2URL:   cfg.SC2URL,
-		Log:      log,
-	})
-	if err != nil {
-		return err
+	}, hub, log)
+
+	// -game starts relaying straight away; otherwise preselect the game the
+	// user picked last time and wait for them to switch it on.
+	statePath, _ := config.StatePath()
+	if cfg.Game != "" {
+		ctrl.Select(cfg.Game)
+		ctrl.Start()
+	} else if statePath != "" {
+		ctrl.Select(config.LoadState(statePath).Game)
+	}
+	if statePath != "" {
+		ctrl.OnSelect = func(game string) {
+			if err := config.SaveState(statePath, config.State{Game: game}); err != nil {
+				log.Warn("couldn't remember the selected game", "err", err)
+			}
+		}
 	}
 
-	hub := relay.NewHub(cfg.AllowedOrigins, log)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws", hub)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(struct {
-			Game string `json:"game"`
+			control.State
 			relay.Stats
-		}{cfg.Game, hub.Stats()})
+		}{ctrl.State(), hub.Stats()})
 	})
-	// The config UI will be served from "/"; until then, point at the socket.
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Single Studio Companion relaying %q on ws://%s/ws\n", cfg.Game, r.Host)
-	})
+	(&ui.Server{Ctrl: ctrl, Errors: errs, Hub: hub, Bind: cfg.Bind}).Register(mux)
 
-	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	log.Info("relay listening", "ws", "ws://"+ln.Addr().String()+"/ws", "game", cfg.Game)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	errc := make(chan error, 2)
-	go func() {
-		errc <- a.Run(ctx, func(data []byte) { hub.Publish(cfg.Game, data) })
-	}()
-	go func() {
-		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
+	log.Info("companion ready", "panel", panel, "ws", "ws://"+addr+"/ws")
+	if openBrowser {
+		if err := ui.Open(panel); err != nil {
+			log.Info("open the control panel in a browser", "url", panel)
 		}
-	}()
+	}
 
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Serve(ln) }()
 	select {
 	case <-ctx.Done():
+		err = nil
 	case err = <-errc:
 	}
-	cancel()
+	ctrl.Stop()
 	shutdownCtx, done := context.WithTimeout(context.Background(), 2*time.Second)
 	defer done()
 	srv.Shutdown(shutdownCtx)
 	log.Info("stopped")
 	return err
+}
+
+// alreadyRunning reports whether a companion answers at panel.
+func alreadyRunning(panel string) bool {
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Get(panel + "status")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }

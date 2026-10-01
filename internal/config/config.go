@@ -4,11 +4,10 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
-	"slices"
+	"path/filepath"
 	"time"
 
 	"github.com/fourcourtjester/single-studio-gamestate/internal/adapter"
@@ -67,11 +66,8 @@ func Load(path string) (Config, error) {
 
 // Validate reports the first problem with the configuration.
 func (c Config) Validate() error {
-	if c.Game == "" {
-		return errors.New("no game selected")
-	}
-	if !slices.Contains(adapter.Games, c.Game) {
-		return fmt.Errorf("unknown game %q (choose one of %v)", c.Game, adapter.Games)
+	if _, ok := adapter.Lookup(c.Game); c.Game != "" && !ok {
+		return fmt.Errorf("unknown game %q", c.Game)
 	}
 	if net.ParseIP(c.Bind) == nil {
 		return fmt.Errorf("bind %q is not an IP address", c.Bind)
@@ -115,4 +111,40 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	}
 	*d = Duration(v)
 	return nil
+}
+
+// State is what the companion remembers between runs.
+type State struct {
+	Game string `json:"game"`
+}
+
+// StatePath returns where State is kept in the user's config directory.
+func StatePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "SingleStudioCompanion", "state.json"), nil
+}
+
+// LoadState reads remembered state. A missing or unreadable file is an
+// empty state: it only saves the user re-picking their game.
+func LoadState(path string) State {
+	var s State
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &s)
+	}
+	return s
+}
+
+// SaveState writes remembered state.
+func SaveState(path string, s State) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }

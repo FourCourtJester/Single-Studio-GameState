@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-func TestDefaultNeedsOnlyAGame(t *testing.T) {
+func TestDefaultIsValid(t *testing.T) {
 	cfg := Default()
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected an error with no game selected")
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
 	}
 	cfg.Game = "sc2"
 	if err := cfg.Validate(); err != nil {
@@ -52,5 +52,18 @@ func TestLoadOverDefaults(t *testing.T) {
 	}
 	if cfg.Port != DefaultPort || cfg.Bind != "127.0.0.1" {
 		t.Fatalf("defaults lost: %+v", cfg)
+	}
+}
+
+func TestStateRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "state.json")
+	if got := LoadState(path); got.Game != "" {
+		t.Fatalf("missing file: got %+v", got)
+	}
+	if err := SaveState(path, State{Game: "apex"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadState(path); got.Game != "apex" {
+		t.Fatalf("got %+v", got)
 	}
 }
