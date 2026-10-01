@@ -116,6 +116,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 type State struct {
 	Game  string `json:"game"`
 	Theme string `json:"theme,omitempty"` // "light" or "dark" (the default)
+	Port  int    `json:"port,omitempty"`  // broadcast port picked in the window
 }
 
 // StatePath returns where State is kept in the user's config directory.

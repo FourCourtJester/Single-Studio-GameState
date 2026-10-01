@@ -21,17 +21,17 @@ var iconPNG []byte
 const appID = "com.singlestudio.gamestate"
 
 type window struct {
-	ctrl     *control.Controller
-	errs     *control.ErrorLog
-	hub      *relay.Hub
-	log      *slog.Logger
-	relayURL string
-	gsiURL   string
-	broken   bool // the relay couldn't start; the window only reports why
-	dark     bool
-	onTheme  func(dark bool)
-	show     *atomic.Pointer[func()]
-	errc     <-chan error
+	ctrl    *control.Controller
+	errs    *control.ErrorLog
+	hub     *relay.Hub
+	log     *slog.Logger
+	relay   *relayServer
+	bind    string
+	gsiURL  string
+	dark    bool
+	onTheme func(dark bool)
+	onPort  func(port int) error
+	show    *atomic.Pointer[func()]
 }
 
 // runWindow shows GameState's window and blocks until it is closed or
@@ -42,11 +42,14 @@ func runWindow(ctx context.Context, w window) {
 	win := a.NewWindow(ui.Title)
 	win.SetMaster()
 
-	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, w.relayURL, w.gsiURL, w.dark)
+	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, ui.Options{
+		Bind:   w.bind,
+		Port:   w.relay.Port(),
+		GSIURL: w.gsiURL,
+		Dark:   w.dark,
+	})
 	p.OnTheme = w.onTheme
-	if w.broken {
-		p.Disable()
-	}
+	p.OnPort = w.onPort
 	raise := func() {
 		fyne.Do(func() {
 			win.Show()
@@ -59,12 +62,15 @@ func runWindow(ctx context.Context, w window) {
 	defer cancel()
 	go p.Run(ctx)
 	go func() {
-		select {
-		case <-ctx.Done():
-			fyne.Do(a.Quit)
-		case err := <-w.errc:
-			w.log.Error("the relay stopped", "err", err)
-			fyne.Do(p.Disable)
+		for {
+			select {
+			case <-ctx.Done():
+				fyne.Do(a.Quit)
+				return
+			case err := <-w.relay.errc:
+				w.log.Error("the broadcast port stopped", "err", err)
+				fyne.Do(func() { p.SetPort(0) })
+			}
 		}
 	}()
 

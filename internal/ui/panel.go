@@ -4,8 +4,11 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,22 +41,26 @@ var gsiGuide, _ = url.Parse("https://developer.valvesoftware.com/wiki/Counter-St
 
 // Panel is GameState's window content.
 type Panel struct {
-	ctrl     *control.Controller
-	errs     *control.ErrorLog
-	hub      *relay.Hub
-	relayURL string
-	gsiURL   string
-	app      fyne.App
-	win      fyne.Window
+	ctrl   *control.Controller
+	errs   *control.ErrorLog
+	hub    *relay.Hub
+	bind   string
+	port   int // broadcast port being served; 0 when none
+	gsiURL string
+	app    fyne.App
+	win    fyne.Window
 
 	// OnTheme is called when the user switches theme, so it can be remembered.
 	OnTheme func(dark bool)
+
+	// OnPort moves the broadcast port. It reports failures itself (they
+	// land in the error pane) and returns them so the panel can revert.
+	OnPort func(port int) error
 
 	// do runs a function on the UI thread; tests swap it for a queue.
 	do func(func())
 
 	dark     bool
-	disabled bool
 	updating bool
 
 	game       *widget.Select
@@ -61,6 +68,8 @@ type Panel struct {
 	powerLabel *widget.Label
 	status     *widget.Label
 	meta       *widget.Label
+	portEntry  *widget.Entry
+	portApply  *widget.Button
 	gsiHelp    *fyne.Container
 	themeBtn   *widget.Button
 	errPane    *fyne.Container
@@ -76,10 +85,20 @@ type Panel struct {
 	settled   float32
 }
 
-// NewPanel builds the window content and sets it on win. relayURL is where
-// Single Studio connects; gsiURL is where CS2 and Dota 2 should send.
-func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, relayURL, gsiURL string, dark bool) *Panel {
-	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, relayURL: relayURL, gsiURL: gsiURL, app: a, win: win, dark: dark, do: fyne.Do}
+// Options configures a Panel.
+type Options struct {
+	Bind   string // address the broadcast port is on
+	Port   int    // broadcast port Single Studio connects to; 0 if it couldn't open
+	GSIURL string // where CS2 and Dota 2 should send game state
+	Dark   bool
+}
+
+// NewPanel builds the window content and sets it on win.
+func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, o Options) *Panel {
+	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, bind: o.Bind, port: o.Port, gsiURL: o.GSIURL, app: a, win: win, dark: o.Dark, do: fyne.Do}
+	// Set the theme before building widgets so their first frame uses it.
+	a.Settings().SetTheme(newTheme(o.Dark))
+	gsiURL := o.GSIURL
 
 	title := widget.NewLabelWithStyle(Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.themeBtn = widget.NewButtonWithIcon("", nil, p.toggleTheme)
@@ -111,6 +130,20 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	p.status = widget.NewLabel("Not relaying")
 	p.power = NewSwitch(p.onPower)
 
+	portLabel := widget.NewLabel("Broadcast port")
+	p.portEntry = widget.NewEntry()
+	p.portEntry.Validator = func(s string) error {
+		_, err := parsePort(s)
+		return err
+	}
+	p.portEntry.OnChanged = func(string) { p.updatePortApply() }
+	p.portEntry.OnSubmitted = func(string) { p.applyPort() }
+	p.portApply = widget.NewButton("Apply", p.applyPort)
+	if o.Port != 0 {
+		p.portEntry.SetText(strconv.Itoa(o.Port))
+	}
+	p.updatePortApply()
+
 	p.meta = widget.NewLabel("")
 	p.meta.Wrapping = fyne.TextWrapWord
 	p.meta.Importance = widget.LowImportance
@@ -136,6 +169,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 		container.NewVBox(gameCaption, p.game),
 		p.gsiHelp,
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
+		container.NewBorder(nil, nil, portLabel, p.portApply, p.portEntry),
 		p.meta,
 		p.errPane,
 	)))
@@ -169,11 +203,59 @@ func (p *Panel) Run(ctx context.Context) {
 	}
 }
 
-// Disable makes the controls inert, for when the relay itself could not
-// start. The error pane still shows why.
-func (p *Panel) Disable() {
-	p.disabled = true
+// SetPort records the broadcast port being served, 0 when none is. With no
+// port the game controls are inert until the user picks one that works.
+func (p *Panel) SetPort(port int) {
+	p.port = port
+	if port != 0 {
+		p.portEntry.SetText(strconv.Itoa(port))
+	}
+	p.updatePortApply()
 	p.Refresh()
+}
+
+func parsePort(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 65535 {
+		return 0, errors.New("enter a port from 1 to 65535")
+	}
+	return n, nil
+}
+
+// updatePortApply enables Apply only for a valid port that isn't the
+// current one.
+func (p *Panel) updatePortApply() {
+	n, err := parsePort(p.portEntry.Text)
+	if err != nil || n == p.port {
+		p.portApply.Disable()
+	} else {
+		p.portApply.Enable()
+	}
+}
+
+func (p *Panel) applyPort() {
+	n, err := parsePort(p.portEntry.Text)
+	if err != nil || n == p.port || p.OnPort == nil {
+		return
+	}
+	p.portApply.Disable()
+	// Moving the port waits for the old server to shut down; keep that off
+	// the UI thread.
+	go func() {
+		err := p.OnPort(n)
+		p.do(func() {
+			if err == nil {
+				p.SetPort(n)
+				return
+			}
+			// Put back the port that is still being served.
+			if p.port != 0 {
+				p.portEntry.SetText(strconv.Itoa(p.port))
+			}
+			p.updatePortApply()
+			p.Refresh()
+		})
+	}()
 }
 
 // Refresh redraws the panel from the controller's state. It must run on the
@@ -193,12 +275,15 @@ func (p *Panel) Refresh() {
 	} else {
 		p.gsiHelp.Hide()
 	}
-	if p.disabled {
+	broadcasting := p.port != 0
+	if broadcasting {
+		p.game.Enable()
+	} else {
 		p.game.Disable()
 	}
 
 	p.power.SetOn(st.Running)
-	if st.Game == "" || p.disabled {
+	if st.Game == "" || !broadcasting {
 		p.power.Disable()
 	} else {
 		p.power.Enable()
@@ -222,7 +307,12 @@ func (p *Panel) Refresh() {
 	if p.hub.Stats().Clients == 1 {
 		overlays = "1 overlay"
 	}
-	p.meta.SetText(fmt.Sprintf("Single Studio connects to %s · %s connected", p.relayURL, overlays))
+	if broadcasting {
+		url := "ws://" + net.JoinHostPort(p.bind, strconv.Itoa(p.port)) + "/ws"
+		p.meta.SetText(fmt.Sprintf("Single Studio connects to %s · %s connected", url, overlays))
+	} else {
+		p.meta.SetText("Not broadcasting. Choose a free port and press Apply.")
+	}
 
 	p.refreshErrors()
 	p.fit()

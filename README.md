@@ -44,6 +44,11 @@ Opening GameState shows its window:
 - **Game:** pick the title you're streaming. The choice is remembered.
 - **On/off:** start or stop relaying. Switching games while on swaps over
   straight away; the old game's data stays in Single Studio.
+- **Broadcast port:** the port Single Studio connects to (47600 by default).
+  Change it and press Apply to move; connected overlays are disconnected and
+  must reconnect on the new port. If the new port is busy, GameState stays on
+  the old one and says why. The choice is remembered. If the port is taken
+  when GameState starts, the game controls stay off until you pick a free one.
 - **Errors:** appears only when something goes wrong (a port already in use,
   a payload that isn't JSON). The window grows to fit it and shrinks back when
   cleared, unless you've resized the window yourself.
@@ -85,7 +90,7 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 | ------------ | ---------------- | ----------------------- | ---------- |
 | `-game`      | `game`           | none (pick in window)   | all        |
 | `-bind`      | `bind`           | `127.0.0.1`             | all        |
-| `-port`      | `port`           | `47600`                 | relay      |
+| `-port`      | `port`           | `47600` (or the port set in the window) | relay |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
 | `-gsi-port`  | `gsiPort`        | `47601`                 | cs2, dota2 |
 | `-apex-port` | `apexPort`       | `7777`                  | apex       |

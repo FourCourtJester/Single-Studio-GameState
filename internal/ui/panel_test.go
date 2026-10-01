@@ -1,12 +1,15 @@
 package ui
 
 import (
+	"errors"
 	"image/png"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,7 +46,12 @@ func newFixture(t *testing.T) fixture {
 	ctrl := control.New(adapter.Options{Bind: "127.0.0.1", Interval: time.Hour, GSIPort: port, SC2URL: "http://127.0.0.1:1"}, hub, log)
 	t.Cleanup(ctrl.Stop)
 	win := a.NewWindow(Title)
-	p := NewPanel(a, win, ctrl, errs, hub, "ws://127.0.0.1:47600/ws", "http://127.0.0.1:47601/", true)
+	p := NewPanel(a, win, ctrl, errs, hub, Options{
+		Bind:   "127.0.0.1",
+		Port:   47600,
+		GSIURL: "http://127.0.0.1:47601/",
+		Dark:   true,
+	})
 	queue := make(chan func(), 100)
 	p.do = func(fn func()) { queue <- fn }
 	p.Show()
@@ -158,6 +166,74 @@ func TestGSIHelpOnlyForGSIGames(t *testing.T) {
 		if f.panel.gsiHelp.Visible() != c.show {
 			t.Errorf("%s: help visible = %v, want %v", c.game, f.panel.gsiHelp.Visible(), c.show)
 		}
+	}
+}
+
+func TestPortApply(t *testing.T) {
+	f := newFixture(t)
+	// OnPort runs off the UI thread, so share state with it under a lock.
+	var mu sync.Mutex
+	var asked []int
+	fail := false
+	f.panel.OnPort = func(port int) error {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, port)
+		if fail {
+			return errors.New("port in use")
+		}
+		return nil
+	}
+	calls := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(asked)
+	}
+
+	for _, bad := range []string{"", "abc", "0", "70000", "47600"} {
+		f.panel.portEntry.SetText(bad)
+		if !f.panel.portApply.Disabled() {
+			t.Errorf("Apply enabled for %q", bad)
+		}
+	}
+
+	f.panel.portEntry.SetText("48000")
+	if f.panel.portApply.Disabled() {
+		t.Fatal("Apply disabled for a valid new port")
+	}
+	test.Tap(f.panel.portApply)
+	eventually(t, f, func() bool { return f.panel.port == 48000 })
+	if !strings.Contains(f.panel.meta.Text, "ws://127.0.0.1:48000/ws") {
+		t.Fatalf("meta = %q", f.panel.meta.Text)
+	}
+	if !f.panel.portApply.Disabled() {
+		t.Fatal("Apply should be disabled once the port is applied")
+	}
+
+	mu.Lock()
+	fail = true
+	mu.Unlock()
+	f.panel.portEntry.SetText("49000")
+	test.Tap(f.panel.portApply)
+	eventually(t, f, func() bool { return calls() == 2 && f.panel.portEntry.Text == "48000" })
+	if f.panel.port != 48000 {
+		t.Fatalf("port = %d after a failed move, want 48000", f.panel.port)
+	}
+}
+
+func TestNoPortDisablesGameControls(t *testing.T) {
+	f := newFixture(t)
+	f.ctrl.Select(adapter.SC2)
+	f.panel.SetPort(0)
+	if !f.panel.game.Disabled() || !f.panel.power.Disabled() {
+		t.Fatal("game controls should be inert without a broadcast port")
+	}
+	if f.panel.portEntry.Disabled() {
+		t.Fatal("the port box must stay usable to fix it")
+	}
+	f.panel.SetPort(48000)
+	if f.panel.game.Disabled() || f.panel.power.Disabled() {
+		t.Fatal("game controls should work again once a port is open")
 	}
 }
 

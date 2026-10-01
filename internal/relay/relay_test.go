@@ -111,3 +111,19 @@ func TestHubRejectsDisallowedOrigin(t *testing.T) {
 		t.Fatal("expected dial from a disallowed origin to fail")
 	}
 }
+
+func TestDisconnectAll(t *testing.T) {
+	hub := NewHub([]string{"*"}, nil)
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+
+	conn, ctx := dial(t, srv)
+	waitForClients(t, hub, 1)
+	hub.DisconnectAll()
+
+	_, _, err := conn.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusGoingAway {
+		t.Fatalf("got %v, want a going-away close", err)
+	}
+	waitForClients(t, hub, 0)
+}

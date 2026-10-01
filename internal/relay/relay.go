@@ -47,6 +47,9 @@ const (
 
 type client struct {
 	send chan []byte
+	// why the hub dropped the client, set before send is closed
+	code   websocket.StatusCode
+	reason string
 }
 
 // Hub holds the connected browser clients and the latest payload per
@@ -92,10 +95,27 @@ func (h *Hub) Publish(ns string, data []byte) {
 			// A client this far behind is stuck; drop it rather than block
 			// the adapter. It can reconnect and get the latest state.
 			h.log.Warn("dropping slow client")
-			delete(h.clients, c)
-			close(c.send)
+			h.drop(c, websocket.StatusPolicyViolation, "client too slow")
 		}
 	}
+}
+
+// DisconnectAll closes every client connection, for when the relay moves
+// to another port. Clients keep the latest payloads; they get them again
+// when they reconnect on the new port.
+func (h *Hub) DisconnectAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		h.drop(c, websocket.StatusGoingAway, "relay moved to another port")
+	}
+}
+
+// drop removes a client and closes its queue; h.mu must be held.
+func (h *Hub) drop(c *client, code websocket.StatusCode, reason string) {
+	c.code, c.reason = code, reason
+	delete(h.clients, c)
+	close(c.send)
 }
 
 // Stats is a snapshot of the hub's state for the status endpoint.
@@ -150,7 +170,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case msg, ok := <-c.send:
 			if !ok {
-				conn.Close(websocket.StatusPolicyViolation, "client too slow")
+				conn.Close(c.code, c.reason)
 				return
 			}
 			if err := write(ctx, conn, msg); err != nil {

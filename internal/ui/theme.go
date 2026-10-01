@@ -30,9 +30,10 @@ func (t panelTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.C
 		return color.NRGBA{0x25, 0x63, 0xeb, 0xff}
 	case theme.ColorNameDisabled:
 		// Low-importance labels (captions, status lines) use this colour;
-		// Fyne's default is too faint to read on the dark background.
+		// Fyne's default is too faint to read on the dark background. Kept
+		// well below normal text so disabled buttons still look disabled.
 		if dark {
-			return color.NRGBA{0x9a, 0x9a, 0xa3, 0xff}
+			return color.NRGBA{0x80, 0x80, 0x8a, 0xff}
 		}
 		return color.NRGBA{0x71, 0x71, 0x7a, 0xff}
 	}

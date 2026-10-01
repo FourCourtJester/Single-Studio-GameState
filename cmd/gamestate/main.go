@@ -100,19 +100,27 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		log.Warn("binding beyond loopback: GameState is reachable from the network", "bind", cfg.Bind)
 	}
 
-	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
-	ln, listenErr := adapter.Listen(addr)
-	if listenErr != nil {
-		// Most likely GameState is already running: bring its window
-		// forward instead of opening a second one.
-		if gui && showRunning(addr) {
-			return nil
+	// A broadcast port picked in the window is remembered, and used unless
+	// -port or a config file chose one.
+	statePath, _ := config.StatePath()
+	state := config.State{}
+	if statePath != "" {
+		state = config.LoadState(statePath)
+	}
+	if cfg.Port == config.DefaultPort && state.Port != 0 {
+		withSaved := cfg
+		withSaved.Port = state.Port
+		if withSaved.Validate() == nil {
+			cfg = withSaved
 		}
-		if !gui {
-			return listenErr
+	}
+	remember := func(fn func(*config.State)) {
+		if statePath == "" {
+			return
 		}
-		// Without a console the window is the only place to say what's wrong.
-		log.Error("can't start the relay", "err", listenErr)
+		if err := config.UpdateState(statePath, fn); err != nil {
+			log.Warn("couldn't save settings", "err", err)
+		}
 	}
 
 	hub := relay.NewHub(cfg.AllowedOrigins, log)
@@ -123,31 +131,6 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		ApexPort: cfg.ApexPort,
 		SC2URL:   cfg.SC2URL,
 	}, hub, log)
-
-	// -game starts relaying straight away; otherwise preselect the game the
-	// user picked last time and wait for them to switch it on.
-	statePath, _ := config.StatePath()
-	state := config.State{}
-	if statePath != "" {
-		state = config.LoadState(statePath)
-	}
-	if cfg.Game != "" {
-		ctrl.Select(cfg.Game)
-		if listenErr == nil {
-			ctrl.Start()
-		}
-	} else {
-		ctrl.Select(state.Game)
-	}
-	remember := func(fn func(*config.State)) {
-		if statePath == "" {
-			return
-		}
-		if err := config.UpdateState(statePath, fn); err != nil {
-			log.Warn("couldn't save settings", "err", err)
-		}
-	}
-	ctrl.OnSelect = func(game string) { remember(func(s *config.State) { s.Game = game }) }
 
 	var show atomic.Pointer[func()]
 	mux := http.NewServeMux()
@@ -172,47 +155,74 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	rs := newRelayServer(cfg.Bind, mux, hub, log)
+	defer rs.Close()
+	if err := rs.Listen(cfg.Port); err != nil {
+		// Most likely GameState is already running: bring its window
+		// forward instead of opening a second one.
+		if gui && showRunning(net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))) {
+			return nil
+		}
+		if !gui {
+			return err
+		}
+		// Without a console the window is the only place to say what's
+		// wrong; the user can pick another port there.
+		log.Error("can't open the broadcast port", "err", err)
+	}
+
+	// -game starts relaying straight away; otherwise preselect the game the
+	// user picked last time and wait for them to switch it on.
+	if cfg.Game != "" {
+		ctrl.Select(cfg.Game)
+		if rs.Port() != 0 {
+			ctrl.Start()
+		}
+	} else {
+		ctrl.Select(state.Game)
+	}
+	ctrl.OnSelect = func(game string) { remember(func(s *config.State) { s.Game = game }) }
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	errc := make(chan error, 1)
-	if ln != nil {
-		log.Info("relay listening", "ws", "ws://"+addr+"/ws")
-		go func() {
-			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-				errc <- err
-			}
-		}()
-	}
 
 	var err error
 	if gui {
 		runWindow(ctx, window{
-			ctrl:     ctrl,
-			errs:     errs,
-			hub:      hub,
-			log:      log,
-			relayURL: "ws://" + addr + "/ws",
-			gsiURL:   "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/",
-			broken:   listenErr != nil,
-			dark:     state.Theme != "light",
+			ctrl:   ctrl,
+			errs:   errs,
+			hub:    hub,
+			log:    log,
+			relay:  rs,
+			bind:   cfg.Bind,
+			gsiURL: "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/",
+			dark:   state.Theme != "light",
 			onTheme: func(dark bool) {
 				remember(func(s *config.State) { s.Theme = map[bool]string{true: "dark", false: "light"}[dark] })
 			},
+			onPort: func(port int) error {
+				if port == cfg.GSIPort || port == cfg.ApexPort {
+					err := fmt.Errorf("port %d is used for receiving game state", port)
+					log.Error("can't move the broadcast port", "err", err)
+					return err
+				}
+				if err := rs.Listen(port); err != nil {
+					log.Error("can't move the broadcast port", "err", err)
+					return err
+				}
+				remember(func(s *config.State) { s.Port = port })
+				return nil
+			},
 			show: &show,
-			errc: errc,
 		})
 	} else {
 		select {
 		case <-ctx.Done():
-		case err = <-errc:
+		case err = <-rs.errc:
 		}
 	}
 
 	ctrl.Stop()
-	shutdownCtx, done := context.WithTimeout(context.Background(), 2*time.Second)
-	defer done()
-	srv.Shutdown(shutdownCtx)
 	log.Info("stopped")
 	return err
 }
