@@ -26,6 +26,7 @@ type window struct {
 	hub      *relay.Hub
 	log      *slog.Logger
 	relayURL string
+	gsiURL   string
 	broken   bool // the relay couldn't start; the window only reports why
 	dark     bool
 	onTheme  func(dark bool)
@@ -41,7 +42,7 @@ func runWindow(ctx context.Context, w window) {
 	win := a.NewWindow(ui.Title)
 	win.SetMaster()
 
-	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, w.relayURL, w.dark)
+	p := ui.NewPanel(a, win, w.ctrl, w.errs, w.hub, w.relayURL, w.gsiURL, w.dark)
 	p.OnTheme = w.onTheme
 	if w.broken {
 		p.Disable()

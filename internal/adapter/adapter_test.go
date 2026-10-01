@@ -156,22 +156,15 @@ func TestReceiver(t *testing.T) {
 	}
 }
 
-func TestReceiverAuth(t *testing.T) {
-	r := &Receiver{Token: "s3cret", Log: quiet}
+func TestReceiverPassesPayloadThroughUntouched(t *testing.T) {
 	c := newCollector()
-	h := r.Handler(c.emit)
-
-	if rec := post(h, http.MethodPost, `{"auth":{"token":"wrong"},"round":{}}`); rec.Code != http.StatusUnauthorized {
-		t.Errorf("wrong token: %d", rec.Code)
+	h := (&Receiver{Log: quiet}).Handler(c.emit)
+	body := `{"auth":{"token":"s3cret"},"round":{}}`
+	if rec := post(h, http.MethodPost, body); rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
 	}
-	if rec := post(h, http.MethodPost, `{"round":{}}`); rec.Code != http.StatusUnauthorized {
-		t.Errorf("missing token: %d", rec.Code)
-	}
-	if rec := post(h, http.MethodPost, `{"auth":{"token":"s3cret"},"round":{}}`); rec.Code != http.StatusOK {
-		t.Fatalf("right token: %d", rec.Code)
-	}
-	if got := c.wait(t); string(got) != `{"round":{}}` {
-		t.Fatalf("token not stripped: %s", got)
+	if got := c.wait(t); string(got) != body {
+		t.Fatalf("payload changed: %s", got)
 	}
 }
 

@@ -43,7 +43,7 @@ func newFixture(t *testing.T) fixture {
 	ctrl := control.New(adapter.Options{Bind: "127.0.0.1", Interval: time.Hour, GSIPort: port, SC2URL: "http://127.0.0.1:1"}, hub, log)
 	t.Cleanup(ctrl.Stop)
 	win := a.NewWindow(Title)
-	p := NewPanel(a, win, ctrl, errs, hub, "ws://127.0.0.1:47600/ws", true)
+	p := NewPanel(a, win, ctrl, errs, hub, "ws://127.0.0.1:47600/ws", "http://127.0.0.1:47601/", true)
 	queue := make(chan func(), 100)
 	p.do = func(fn func()) { queue <- fn }
 	p.Show()
@@ -147,6 +147,20 @@ func TestUserResizedWindowIsLeftAlone(t *testing.T) {
 	}
 }
 
+func TestGSIHelpOnlyForGSIGames(t *testing.T) {
+	f := newFixture(t)
+	for _, c := range []struct {
+		game string
+		show bool
+	}{{adapter.CS2, true}, {adapter.SC2, false}, {adapter.Dota2, true}, {adapter.Apex, false}} {
+		f.ctrl.Select(c.game)
+		f.panel.Refresh()
+		if f.panel.gsiHelp.Visible() != c.show {
+			t.Errorf("%s: help visible = %v, want %v", c.game, f.panel.gsiHelp.Visible(), c.show)
+		}
+	}
+}
+
 func TestErrorPaneCapsRows(t *testing.T) {
 	f := newFixture(t)
 	for i := range maxShownErrors + 3 {
@@ -193,8 +207,14 @@ func TestScreenshots(t *testing.T) {
 	shot("2-waiting")
 	f.ctrl.Stop()
 	f.errs.Add(time.Now(), "Counter-Strike 2 stopped: port 47601 is already in use by another program")
-	f.errs.Add(time.Now(), "rejected game state: auth token does not match the one set with -gsi-token")
+	f.errs.Add(time.Now(), "rejected game state: payload is not JSON")
 	shot("3-errors")
 	test.Tap(f.panel.themeBtn)
 	shot("4-errors-light")
+	test.Tap(f.panel.themeBtn)
+	f.errs.Clear()
+	f.ctrl.Select(adapter.Dota2)
+	f.panel.Refresh() // let the window shrink back, then capture
+	time.Sleep(resizeSettle + 50*time.Millisecond)
+	shot("5-dota")
 }

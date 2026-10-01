@@ -21,9 +21,8 @@ const maxGSIBody = 4 << 20
 // Integration both work this way. The user's own GSI config file points the
 // game at it; writing that file is outside this app.
 type Receiver struct {
-	Addr  string
-	Token string // when set, payloads must carry this auth token
-	Log   *slog.Logger
+	Addr string
+	Log  *slog.Logger
 }
 
 // Run serves until ctx is cancelled.
@@ -68,11 +67,6 @@ func (r *Receiver) Handler(emit func([]byte)) http.Handler {
 			reject(w, "payload is not JSON", http.StatusBadRequest)
 			return
 		}
-		body, ok := checkAuth(body, r.Token)
-		if !ok {
-			reject(w, "auth token does not match the one set with -gsi-token", http.StatusUnauthorized)
-			return
-		}
 		lastReject.Store(nil)
 		if !seen.Swap(true) {
 			r.Log.Info("source connected")
@@ -80,34 +74,6 @@ func (r *Receiver) Handler(emit func([]byte)) http.Handler {
 		emit(body)
 		w.WriteHeader(http.StatusOK)
 	})
-}
-
-// checkAuth verifies the GSI auth block when a token is configured and
-// strips it from the payload, so the token is never relayed to browsers.
-func checkAuth(body []byte, token string) ([]byte, bool) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil {
-		// Valid JSON but not an object: nothing to strip.
-		return body, token == ""
-	}
-	raw, present := fields["auth"]
-	if token != "" {
-		var auth struct {
-			Token string `json:"token"`
-		}
-		if !present || json.Unmarshal(raw, &auth) != nil || auth.Token != token {
-			return nil, false
-		}
-	}
-	if !present {
-		return body, true
-	}
-	delete(fields, "auth")
-	out, err := json.Marshal(fields)
-	if err != nil {
-		return nil, false
-	}
-	return out, true
 }
 
 // Listen opens a TCP listener on addr, explaining the common failure in

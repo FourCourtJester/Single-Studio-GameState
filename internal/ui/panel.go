@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,12 +32,17 @@ const (
 	resizeSettle = 300 * time.Millisecond
 )
 
+// gsiGuide is Valve's Game State Integration guide. It was written for
+// CS:GO, but CS2 and Dota 2 set up their GSI files the same way.
+var gsiGuide, _ = url.Parse("https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration")
+
 // Panel is GameState's window content.
 type Panel struct {
 	ctrl     *control.Controller
 	errs     *control.ErrorLog
 	hub      *relay.Hub
 	relayURL string
+	gsiURL   string
 	app      fyne.App
 	win      fyne.Window
 
@@ -55,6 +61,7 @@ type Panel struct {
 	powerLabel *widget.Label
 	status     *widget.Label
 	meta       *widget.Label
+	gsiHelp    *fyne.Container
 	themeBtn   *widget.Button
 	errPane    *fyne.Container
 	errBG      *canvas.Rectangle
@@ -69,9 +76,10 @@ type Panel struct {
 	settled   float32
 }
 
-// NewPanel builds the window content and sets it on win.
-func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, relayURL string, dark bool) *Panel {
-	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, relayURL: relayURL, app: a, win: win, dark: dark, do: fyne.Do}
+// NewPanel builds the window content and sets it on win. relayURL is where
+// Single Studio connects; gsiURL is where CS2 and Dota 2 should send.
+func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *control.ErrorLog, hub *relay.Hub, relayURL, gsiURL string, dark bool) *Panel {
+	p := &Panel{ctrl: ctrl, errs: errs, hub: hub, relayURL: relayURL, gsiURL: gsiURL, app: a, win: win, dark: dark, do: fyne.Do}
 
 	title := widget.NewLabelWithStyle(Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.themeBtn = widget.NewButtonWithIcon("", nil, p.toggleTheme)
@@ -87,6 +95,17 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	}
 	p.game = widget.NewSelect(names, p.onSelect)
 	p.game.PlaceHolder = "Choose a game…"
+
+	// CS2 and Dota 2 only send to addresses in the user's own GSI file, so
+	// say what address that is and where to learn how to write the file.
+	gsiText := widget.NewLabel("Your Game State Integration file should send to " + gsiURL)
+	gsiText.Wrapping = fyne.TextWrapWord
+	gsiText.SizeName = theme.SizeNameCaptionText
+	gsiText.Importance = widget.LowImportance
+	gsiLink := widget.NewHyperlink("Setup guide (Valve)", gsiGuide)
+	gsiLink.SizeName = theme.SizeNameCaptionText
+	p.gsiHelp = container.NewVBox(gsiText, gsiLink)
+	p.gsiHelp.Hide()
 
 	p.powerLabel = widget.NewLabelWithStyle("Off", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.status = widget.NewLabel("Not relaying")
@@ -115,6 +134,7 @@ func NewPanel(a fyne.App, win fyne.Window, ctrl *control.Controller, errs *contr
 	win.SetContent(container.NewPadded(container.NewVBox(
 		container.NewBorder(nil, nil, nil, p.themeBtn, title),
 		container.NewVBox(gameCaption, p.game),
+		p.gsiHelp,
 		container.NewBorder(nil, nil, nil, p.power, container.NewVBox(p.powerLabel, p.status)),
 		p.meta,
 		p.errPane,
@@ -168,6 +188,11 @@ func (p *Panel) Refresh() {
 		p.game.ClearSelected()
 	}
 	p.updating = false
+	if st.Game == adapter.CS2 || st.Game == adapter.Dota2 {
+		p.gsiHelp.Show()
+	} else {
+		p.gsiHelp.Hide()
+	}
 	if p.disabled {
 		p.game.Disable()
 	}

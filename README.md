@@ -45,7 +45,7 @@ Opening GameState shows its window:
 - **On/off:** start or stop relaying. Switching games while on swaps over
   straight away; the old game's data stays in Single Studio.
 - **Errors:** appears only when something goes wrong (a port already in use,
-  a rejected GSI token). The window grows to fit it and shrinks back when
+  a payload that isn't JSON). The window grows to fit it and shrinks back when
   cleared, unless you've resized the window yourself.
 
 The window is dark by default; the button in its corner switches to light, and
@@ -70,9 +70,9 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 - **CS2 / Dota 2:** the game only sends its state to the addresses listed in
   your Game State Integration config file. Creating and managing that file
   is up to you; GameState only needs its `uri` to be
-  `http://127.0.0.1:47601/`. If the file sets an auth token, start GameState
-  with the same `-gsi-token <secret>` and it will reject posts without it.
-  The token is stripped before relaying.
+  `http://127.0.0.1:47601/`. Payloads are relayed exactly as the game sends
+  them. Valve's [Game State Integration guide](https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration)
+  covers the file for both games.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
   JSON payloads are relayed as-is. Protobuf payloads are relayed base64-encoded.
@@ -88,7 +88,6 @@ gamestate -no-window -config gamestate.json    # read settings from a file; flag
 | `-port`      | `port`           | `47600`                 | relay      |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
 | `-gsi-port`  | `gsiPort`        | `47601`                 | cs2, dota2 |
-| `-gsi-token` | `gsiToken`       | none                    | cs2, dota2 |
 | `-apex-port` | `apexPort`       | `7777`                  | apex       |
 | `-sc2-url`   | `sc2Url`         | `http://127.0.0.1:6119` | sc2        |
 | (none)       | `allowedOrigins` | `["*"]`                 | relay      |

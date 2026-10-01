@@ -31,7 +31,6 @@ type Config struct {
 	Port           int      `json:"port"`
 	Interval       Duration `json:"interval"`
 	GSIPort        int      `json:"gsiPort"`
-	GSIToken       string   `json:"gsiToken,omitempty"`
 	ApexPort       int      `json:"apexPort"`
 	SC2URL         string   `json:"sc2Url"`
 	AllowedOrigins []string `json:"allowedOrigins"`

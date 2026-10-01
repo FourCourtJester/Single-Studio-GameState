@@ -68,7 +68,6 @@ type Options struct {
 	Bind     string        // interface receive adapters listen on
 	Interval time.Duration // poll interval for poll adapters
 	GSIPort  int           // CS2 / Dota 2 Game State Integration receiver
-	GSIToken string        // optional GSI auth token to require
 	ApexPort int           // Apex LiveAPI WebSocket server
 	SC2URL   string        // StarCraft II client API base URL
 	Log      *slog.Logger
@@ -101,9 +100,8 @@ func New(game string, o Options) (Adapter, error) {
 		}, nil
 	case CS2, Dota2:
 		return &Receiver{
-			Addr:  net.JoinHostPort(o.Bind, strconv.Itoa(o.GSIPort)),
-			Token: o.GSIToken,
-			Log:   log,
+			Addr: net.JoinHostPort(o.Bind, strconv.Itoa(o.GSIPort)),
+			Log:  log,
 		}, nil
 	case Apex:
 		return &WSServer{

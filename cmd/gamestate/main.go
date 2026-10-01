@@ -86,7 +86,6 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "relay WebSocket port Single Studio connects to")
 	fs.DurationVar((*time.Duration)(&cfg.Interval), "interval", time.Duration(cfg.Interval), "poll interval (sc2, lol)")
 	fs.IntVar(&cfg.GSIPort, "gsi-port", cfg.GSIPort, "GSI receiver port (cs2, dota2)")
-	fs.StringVar(&cfg.GSIToken, "gsi-token", cfg.GSIToken, "GSI auth token to require (cs2, dota2)")
 	fs.IntVar(&cfg.ApexPort, "apex-port", cfg.ApexPort, "LiveAPI WebSocket server port (apex)")
 	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
 	err := fs.Parse(args)
@@ -121,7 +120,6 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 		Bind:     cfg.Bind,
 		Interval: time.Duration(cfg.Interval),
 		GSIPort:  cfg.GSIPort,
-		GSIToken: cfg.GSIToken,
 		ApexPort: cfg.ApexPort,
 		SC2URL:   cfg.SC2URL,
 	}, hub, log)
@@ -195,6 +193,7 @@ func serve(ctx context.Context, cfg config.Config, gui bool) error {
 			hub:      hub,
 			log:      log,
 			relayURL: "ws://" + addr + "/ws",
+			gsiURL:   "http://" + net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.GSIPort)) + "/",
 			broken:   listenErr != nil,
 			dark:     state.Theme != "light",
 			onTheme: func(dark bool) {
