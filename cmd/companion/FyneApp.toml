@@ -1,0 +1,11 @@
+Website = "https://github.com/fourcourtjester/single-studio-gamestate"
+
+[Details]
+Icon = "Icon.png"
+Name = "Single Studio Companion"
+ID = "com.singlestudio.companion"
+Version = "0.1.0"
+Build = 2
+
+[Release]
+BuildName = "companion"

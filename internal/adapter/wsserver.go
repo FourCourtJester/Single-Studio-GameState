@@ -21,7 +21,7 @@ type WSServer struct {
 
 // Run serves until ctx is cancelled.
 func (s *WSServer) Run(ctx context.Context, emit func([]byte)) error {
-	ln, err := listen(s.Addr)
+	ln, err := Listen(s.Addr)
 	if err != nil {
 		return err
 	}

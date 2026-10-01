@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,13 +25,12 @@ import (
 	"github.com/fourcourtjester/single-studio-gamestate/internal/control"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/gsi"
 	"github.com/fourcourtjester/single-studio-gamestate/internal/relay"
-	"github.com/fourcourtjester/single-studio-gamestate/internal/ui"
 )
 
 const usage = `Single Studio Companion
 
 Usage:
-  companion [flags]             run the companion and open its control panel
+  companion [flags]             run the companion and open its window
   companion gsi-config [flags]  print the CS2 / Dota 2 GSI config file
 
 Games: apex, sc2, lol, cs2, dota2, war3
@@ -54,33 +54,33 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if printGSI {
 		args = args[1:]
 	}
-	cfg, noBrowser, err := parseConfig(args)
+	cfg, noWindow, err := parseConfig(args)
 	if err != nil {
 		return err
 	}
 	if printGSI {
 		return printGSIConfig(cfg, stdout)
 	}
-	return serve(ctx, cfg, !noBrowser)
+	return serve(ctx, cfg, !noWindow)
 }
 
 // parseConfig builds the config from defaults, an optional -config file,
 // then flags. Flags always win over the file.
-func parseConfig(args []string) (cfg config.Config, noBrowser bool, err error) {
+func parseConfig(args []string) (cfg config.Config, noWindow bool, err error) {
 	cfg = config.Default()
-	path, noBrowser, err := parseFlags(&cfg, args)
+	path, noWindow, err := parseFlags(&cfg, args)
 	if err != nil {
-		return cfg, noBrowser, err
+		return cfg, noWindow, err
 	}
 	if path != "" {
 		if cfg, err = config.Load(path); err != nil {
-			return cfg, noBrowser, err
+			return cfg, noWindow, err
 		}
 		if _, _, err := parseFlags(&cfg, args); err != nil {
-			return cfg, noBrowser, err
+			return cfg, noWindow, err
 		}
 	}
-	return cfg, noBrowser, cfg.Validate()
+	return cfg, noWindow, cfg.Validate()
 }
 
 func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
@@ -90,7 +90,7 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 		fs.PrintDefaults()
 	}
 	path := fs.String("config", "", "path to a JSON config file")
-	noBrowser := fs.Bool("no-browser", false, "don't open the control panel on start")
+	noWindow := fs.Bool("no-window", false, "run without a window (headless)")
 	fs.StringVar(&cfg.Game, "game", cfg.Game, "game to start relaying immediately")
 	fs.StringVar(&cfg.Bind, "bind", cfg.Bind, "address every listener binds to")
 	fs.IntVar(&cfg.Port, "port", cfg.Port, "relay WebSocket port Single Studio connects to")
@@ -100,7 +100,7 @@ func parseFlags(cfg *config.Config, args []string) (string, bool, error) {
 	fs.IntVar(&cfg.ApexPort, "apex-port", cfg.ApexPort, "LiveAPI WebSocket server port (apex)")
 	fs.StringVar(&cfg.SC2URL, "sc2-url", cfg.SC2URL, "StarCraft II client API base URL (sc2)")
 	err := fs.Parse(args)
-	return *path, *noBrowser, err
+	return *path, *noWindow, err
 }
 
 func printGSIConfig(cfg config.Config, w io.Writer) error {
@@ -117,7 +117,8 @@ func printGSIConfig(cfg config.Config, w io.Writer) error {
 	return err
 }
 
-func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
+// serve runs the relay, with the window unless gui is false.
+func serve(ctx context.Context, cfg config.Config, gui bool) error {
 	errs := &control.ErrorLog{}
 	log := slog.New(errs.Handler(slog.NewTextHandler(os.Stderr, nil)))
 	if !cfg.Loopback() {
@@ -125,15 +126,18 @@ func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
 	}
 
 	addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(cfg.Port))
-	panel := "http://" + addr + "/"
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		// Most likely the companion is already running: show its panel.
-		if openBrowser && alreadyRunning(panel) {
-			fmt.Fprintln(os.Stderr, "companion is already running at", panel)
-			return ui.Open(panel)
+	ln, listenErr := adapter.Listen(addr)
+	if listenErr != nil {
+		// Most likely the companion is already running: bring its window
+		// forward instead of opening a second one.
+		if gui && showRunning(addr) {
+			return nil
 		}
-		return err
+		if !gui {
+			return listenErr
+		}
+		// Without a console the window is the only place to say what's wrong.
+		log.Error("can't start the relay", "err", listenErr)
 	}
 
 	hub := relay.NewHub(cfg.AllowedOrigins, log)
@@ -149,20 +153,29 @@ func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
 	// -game starts relaying straight away; otherwise preselect the game the
 	// user picked last time and wait for them to switch it on.
 	statePath, _ := config.StatePath()
+	state := config.State{}
+	if statePath != "" {
+		state = config.LoadState(statePath)
+	}
 	if cfg.Game != "" {
 		ctrl.Select(cfg.Game)
-		ctrl.Start()
-	} else if statePath != "" {
-		ctrl.Select(config.LoadState(statePath).Game)
+		if listenErr == nil {
+			ctrl.Start()
+		}
+	} else {
+		ctrl.Select(state.Game)
 	}
-	if statePath != "" {
-		ctrl.OnSelect = func(game string) {
-			if err := config.SaveState(statePath, config.State{Game: game}); err != nil {
-				log.Warn("couldn't remember the selected game", "err", err)
-			}
+	remember := func(fn func(*config.State)) {
+		if statePath == "" {
+			return
+		}
+		if err := config.UpdateState(statePath, fn); err != nil {
+			log.Warn("couldn't save settings", "err", err)
 		}
 	}
+	ctrl.OnSelect = func(game string) { remember(func(s *config.State) { s.Game = game }) }
 
+	var show atomic.Pointer[func()]
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws", hub)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
@@ -172,23 +185,55 @@ func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
 			relay.Stats
 		}{ctrl.State(), hub.Stats()})
 	})
-	(&ui.Server{Ctrl: ctrl, Errors: errs, Hub: hub, Bind: cfg.Bind}).Register(mux)
+	// A second launch asks this one to bring its window forward. Browsers
+	// always send Origin on cross-site POSTs, so web pages can't do this.
+	mux.HandleFunc("POST /show", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if f := show.Load(); f != nil {
+			(*f)()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	log.Info("companion ready", "panel", panel, "ws", "ws://"+addr+"/ws")
-	if openBrowser {
-		if err := ui.Open(panel); err != nil {
-			log.Info("open the control panel in a browser", "url", panel)
+	errc := make(chan error, 1)
+	if ln != nil {
+		log.Info("relay listening", "ws", "ws://"+addr+"/ws")
+		go func() {
+			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
+
+	var err error
+	if gui {
+		runWindow(ctx, window{
+			ctrl:     ctrl,
+			errs:     errs,
+			hub:      hub,
+			log:      log,
+			relayURL: "ws://" + addr + "/ws",
+			broken:   listenErr != nil,
+			dark:     state.Theme != "light",
+			onTheme: func(dark bool) {
+				remember(func(s *config.State) { s.Theme = map[bool]string{true: "dark", false: "light"}[dark] })
+			},
+			show: &show,
+			errc: errc,
+		})
+	} else {
+		select {
+		case <-ctx.Done():
+		case err = <-errc:
 		}
 	}
 
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
-	select {
-	case <-ctx.Done():
-		err = nil
-	case err = <-errc:
-	}
 	ctrl.Stop()
 	shutdownCtx, done := context.WithTimeout(context.Background(), 2*time.Second)
 	defer done()
@@ -197,13 +242,14 @@ func serve(ctx context.Context, cfg config.Config, openBrowser bool) error {
 	return err
 }
 
-// alreadyRunning reports whether a companion answers at panel.
-func alreadyRunning(panel string) bool {
+// showRunning asks a companion already listening on addr to bring its
+// window forward, and reports whether one answered.
+func showRunning(addr string) bool {
 	client := &http.Client{Timeout: time.Second}
-	resp, err := client.Get(panel + "status")
+	resp, err := client.Post("http://"+addr+"/show", "text/plain", nil)
 	if err != nil {
 		return false
 	}
 	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return resp.StatusCode == http.StatusNoContent
 }

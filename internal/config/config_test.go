@@ -67,3 +67,12 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestUpdateStateKeepsOtherFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	SaveState(path, State{Game: "sc2", Theme: "light"})
+	UpdateState(path, func(s *State) { s.Game = "lol" })
+	if got := LoadState(path); got.Game != "lol" || got.Theme != "light" {
+		t.Fatalf("got %+v", got)
+	}
+}

@@ -19,34 +19,50 @@ for the titles below.
 | Dota 2            | `dota2`   | Receives Game State Integration POSTs                   | Implemented     |
 | Warcraft III      | `war3`    | Transport still to be confirmed                         | Not implemented |
 
+## Download
+
+Grab the build for your system from the
+[Releases](https://github.com/fourcourtjester/single-studio-gamestate/releases) page:
+
+| System                | File                                        | To run                                   |
+| --------------------- | ------------------------------------------- | ---------------------------------------- |
+| Windows               | `SingleStudioCompanion-windows-amd64.exe`   | Double-click it                          |
+| Mac (Apple Silicon)   | `SingleStudioCompanion-macos-arm64.zip`     | Unzip, then open the app                 |
+| Mac (Intel)           | `SingleStudioCompanion-macos-intel.zip`     | Unzip, then open the app                 |
+| Linux                 | `SingleStudioCompanion-linux-amd64.tar.xz`  | Extract and run `usr/local/bin/companion`, or `make user-install` for a menu entry |
+
+The builds are not code-signed yet. On Windows, SmartScreen may warn on first
+launch ("More info" → "Run anyway"). On a Mac, right-click the app and choose
+**Open** the first time.
+
 ## Usage
 
-Double-click the companion. It opens its control panel in your browser:
+Opening the companion shows its window:
 
-![Control panel](docs/panel.png)
+![Companion window](docs/panel.png)
 
 - **Game:** pick the title you're streaming. The choice is remembered.
 - **On/off:** start or stop relaying. Switching games while on swaps over
   straight away; the old game's data stays in Single Studio.
 - **Errors:** appears only when something goes wrong (a port already in use,
-  a rejected GSI token) and disappears when cleared.
+  a rejected GSI token). The window grows to fit it and shrinks back when
+  cleared, unless you've resized the window yourself.
 
-The panel is dark by default; the button in its corner switches to light, and
-the choice is remembered.
-
-Closing the browser tab leaves the companion running; launching it again
-reopens the panel. Close the companion's console window to quit.
+The window is dark by default; the button in its corner switches to light, and
+the choice is remembered. The companion runs for as long as the window is
+open: minimise it while you stream, close it to quit. Opening the companion
+again while it's running brings the existing window forward.
 
 Single Studio connects to `ws://127.0.0.1:47600/ws`. `GET /status` reports the
 game, whether it is on, the connected overlay count and when the last payload
 arrived.
 
-For headless use, flags skip the panel:
+For headless use (a server, or scripting), `-no-window` runs without a window:
 
 ```sh
-companion -no-browser -game sc2                 # relay StarCraft II immediately
-companion -no-browser -game sc2 -interval 250ms # poll at 4 Hz
-companion -config companion.json                # read settings from a file; flags still win
+companion -no-window -game sc2                 # relay StarCraft II immediately
+companion -no-window -game sc2 -interval 250ms # poll at 4 Hz
+companion -no-window -config companion.json    # read settings from a file; flags still win
 ```
 
 ### Per-game setup
@@ -70,7 +86,7 @@ companion -config companion.json                # read settings from a file; fla
 
 | Flag         | JSON key         | Default                 | Used by    |
 | ------------ | ---------------- | ----------------------- | ---------- |
-| `-game`      | `game`           | none (pick in panel)    | all        |
+| `-game`      | `game`           | none (pick in window)   | all        |
 | `-bind`      | `bind`           | `127.0.0.1`             | all        |
 | `-port`      | `port`           | `47600`                 | relay      |
 | `-interval`  | `interval`       | `1s`                    | sc2, lol   |
@@ -102,18 +118,32 @@ payload.
 
 ## Development
 
+The window uses [Fyne](https://fyne.io), which needs a C compiler and, on
+Linux, the OpenGL and X11/Wayland headers:
+
 ```sh
+sudo apt-get install gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
 go test -race ./...
-GOOS=windows GOARCH=amd64 go build -o dist/companion.exe ./cmd/companion
-GOOS=darwin  GOARCH=arm64 go build -o dist/companion-mac ./cmd/companion
+go run ./cmd/companion
 ```
+
+Each OS is built on its own machine. CI does this for every push, and pushing
+a `v*` tag publishes the builds as a GitHub Release. To package locally:
+
+```sh
+go install fyne.io/tools/cmd/fyne@v1.7.3
+cd cmd/companion && fyne package --target linux --release   # or windows / darwin on those systems
+```
+
+`PANEL_SHOTS=<dir> go test -run Screenshots ./internal/ui` renders the window
+in each state to PNGs, for checking visual changes.
 
 Layout:
 
-- `cmd/companion`: flags, the relay server and the `gsi-config` command
+- `cmd/companion`: flags, the relay server, the window and the `gsi-config` command
 - `internal/relay`: the envelope and the WebSocket fan-out hub
 - `internal/adapter`: per-title acquisition (poll, receive HTTP, host a WebSocket)
 - `internal/gsi`: CS2 / Dota 2 GSI config generation
-- `internal/config`: settings, defaults, validation and the remembered game
+- `internal/config`: settings, defaults, validation and remembered choices
 - `internal/control`: starts, stops and switches the adapter; collects errors
-- `internal/ui`: the control panel page and its JSON API
+- `internal/ui`: the window's panel, its on/off switch and theme

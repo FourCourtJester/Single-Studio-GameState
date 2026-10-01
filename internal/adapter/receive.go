@@ -28,7 +28,7 @@ type Receiver struct {
 
 // Run serves until ctx is cancelled.
 func (r *Receiver) Run(ctx context.Context, emit func([]byte)) error {
-	ln, err := listen(r.Addr)
+	ln, err := Listen(r.Addr)
 	if err != nil {
 		return err
 	}
@@ -110,8 +110,9 @@ func checkAuth(body []byte, token string) ([]byte, bool) {
 	return out, true
 }
 
-// listen opens addr, explaining the common failure in plain words.
-func listen(addr string) (net.Listener, error) {
+// Listen opens a TCP listener on addr, explaining the common failure in
+// plain words.
+func Listen(addr string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err == nil {
 		return ln, nil

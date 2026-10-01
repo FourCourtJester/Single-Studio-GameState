@@ -46,7 +46,7 @@ func TestGSIConfigCommand(t *testing.T) {
 }
 
 func TestServeStopsOnCancel(t *testing.T) {
-	args := []string{"-no-browser", "-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
+	args := []string{"-no-window", "-game", "cs2", "-port", freePort(t), "-gsi-port", freePort(t)}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error)
 	go func() { errc <- run(ctx, args, nil) }()

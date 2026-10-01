@@ -1,3 +1,6 @@
 /dist/
 /companion
+cmd/companion/companion
 *.exe
+*.app/
+*.tar.xz

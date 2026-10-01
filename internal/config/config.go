@@ -115,7 +115,8 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // State is what the companion remembers between runs.
 type State struct {
-	Game string `json:"game"`
+	Game  string `json:"game"`
+	Theme string `json:"theme,omitempty"` // "light" or "dark" (the default)
 }
 
 // StatePath returns where State is kept in the user's config directory.
@@ -147,4 +148,11 @@ func SaveState(path string, s State) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// UpdateState changes remembered state in place, keeping fields fn leaves alone.
+func UpdateState(path string, fn func(*State)) error {
+	s := LoadState(path)
+	fn(&s)
+	return SaveState(path, s)
 }
