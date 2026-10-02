@@ -12,13 +12,18 @@ for the titles below.
 
 | Title             | ID        | How GameState gets the data                          | Default port | Status          |
 | ----------------- | --------- | ---------------------------------------------------- | ------------ | --------------- |
-| Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | 7777      | Implemented     |
-| Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                | 47601        | Implemented     |
-| Dota 2            | `dota2`   | Receives Game State Integration POSTs                | 47601        | Implemented     |
-| League of Legends | `lol`     | Polls live client data on https://127.0.0.1:2999     | fixed (2999) | Implemented     |
-| Rocket League     | `rl`      | Connects to the Stats API WebSocket the game serves  | 49124        | Implemented     |
-| StarCraft II      | `sc2`     | Polls the client API `/game` and `/ui`               | 6119         | Implemented     |
+| Apex Legends      | `apex`    | Hosts a WebSocket server the game connects to (LiveAPI) | 7777      | Untested        |
+| Counter-Strike 2  | `cs2`     | Receives Game State Integration POSTs                | 47601        | Untested        |
+| Dota 2            | `dota2`   | Receives Game State Integration POSTs                | 47601        | Untested        |
+| League of Legends | `lol`     | Polls live client data on https://127.0.0.1:2999     | fixed (2999) | Untested        |
+| Rocket League     | `rl`      | Connects to the Stats API WebSocket the game serves  | 49124        | Tested          |
+| StarCraft II      | `sc2`     | Polls the client API `/game` and `/ui`               | 6119         | Untested        |
 | Warcraft III      | `war3`    | Transport still to be confirmed                      |              | Not implemented |
+
+**Tested** means confirmed end to end with the real game. **Untested**
+titles are built from each game's documentation and haven't yet been run
+against the game itself; they'll be checked as the games become available, and
+reports are welcome.
 
 Every port except League's can be changed in the window to match your own
 setup.
@@ -70,7 +75,10 @@ the choice is remembered. GameState runs for as long as the window is
 open: minimise it while you stream, close it to quit. Opening GameState
 again while it's running brings the existing window forward.
 
-Single Studio connects to `ws://127.0.0.1:47600`. `GET /status` reports the
+Single Studio connects to `ws://127.0.0.1:47600` (or `ws://localhost:47600`).
+A studio served over `https://`, such as GitHub Pages, needs the browser's
+permission to reach programs on this computer; in Chrome that's the site's
+**Local network access** setting. `GET /status` reports the
 game, whether it is on, the connected overlay count and when the last payload
 arrived.
 
@@ -94,7 +102,8 @@ to use for the selected game, with a link to that game's own guide.
   (`http://127.0.0.1:47601/` by default). Payloads are relayed exactly as the
   game sends them. Valve's
   [Game State Integration guide](https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration)
-  covers the file for both games.
+  covers the file for both games. Dota 2 also needs the
+  `-gamestateintegration` launch option.
 - **Apex:** add these launch options:
   `+cl_liveapi_enabled 1 +cl_liveapi_ws_servers "ws://127.0.0.1:7777"`.
   JSON is relayed as text, protobuf as binary, both unchanged.
