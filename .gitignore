@@ -1,0 +1,6 @@
+/dist/
+/gamestate
+cmd/gamestate/gamestate
+*.exe
+*.app/
+*.tar.xz

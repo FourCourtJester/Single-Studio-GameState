@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+env:
+  FYNE_CLI: fyne.io/tools/cmd/fyne@v1.7.3
+  APP: Single Studio - GameState
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install window system headers
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  package:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-amd64
+            os: windows-latest
+            target: windows
+            goarch: amd64
+          - name: macos-arm64
+            os: macos-latest
+            target: darwin
+            goarch: arm64
+          - name: macos-intel
+            os: macos-latest
+            target: darwin
+            goarch: amd64
+          - name: linux-amd64
+            os: ubuntu-latest
+            target: linux
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install window system headers
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: Install fyne packager
+        run: go install ${{ env.FYNE_CLI }}
+      - name: Package
+        shell: bash
+        working-directory: cmd/gamestate
+        env:
+          CGO_ENABLED: "1"
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version=0.0.0
+          # Windows icons hold at most 256x256 and fyne embeds the source as a
+          # single image, so Windows gets its own 256px copy of the logo.
+          icon=Icon.png
+          [[ "${{ matrix.target }}" == windows ]] && icon=Icon-windows.png
+          fyne package --target ${{ matrix.target }} --release --icon "$icon" --app-version "$version" --app-build "$GITHUB_RUN_NUMBER"
+          mkdir -p ../../dist
+          out="../../dist/Single-Studio-GameState-${{ matrix.name }}"
+          case "${{ matrix.target }}" in
+            windows) mv "$APP.exe" "$out.exe" ;;
+            darwin)
+              # Both Mac builds run on Apple Silicon; make sure the Intel one
+              # really was cross-compiled.
+              want=$([[ "$GOARCH" == amd64 ]] && echo x86_64 || echo arm64)
+              got=$(lipo -archs "$APP.app/Contents/MacOS/"*)
+              echo "binary architecture: $got"
+              [[ "$got" == "$want" ]] || { echo "expected $want"; exit 1; }
+              ditto -c -k --keepParent "$APP.app" "$out.zip" ;;
+            linux)   mv "$APP.tar.xz" "$out.tar.xz" ;;
+          esac
+          ls -la ../../dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Single-Studio-GameState-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
